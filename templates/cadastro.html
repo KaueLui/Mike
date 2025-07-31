@@ -1,0 +1,316 @@
+<!-- filepath: d:\ifpe\Facial\templates\cadastro.html -->
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cadastrar Rosto</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container">
+            <a class="navbar-brand" href="/">👁️ Reconhecimento Facial</a>
+            <div class="navbar-nav">
+                <a class="nav-link" href="/">Início</a>
+                <a class="nav-link active" href="/cadastro">Cadastrar</a>
+                <a class="nav-link" href="/reconhecimento">Reconhecer</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <h2>📝 Cadastrar Novo Rosto</h2>
+        
+        <div class="row">
+            <div class="col-md-6">
+                <div class="mb-3">
+                    <label for="nome" class="form-label">Nome da pessoa:</label>
+                    <input type="text" class="form-control" id="nome" placeholder="Digite o nome">
+                </div>
+                
+                <div class="video-container" style="position: relative;">
+                    <video id="video" width="100%" height="300" autoplay style="border-radius: 8px;"></video>
+                    <canvas id="overlay" width="100%" height="300" style="position: absolute; top: 0; left: 0; pointer-events: none;"></canvas>
+                    <canvas id="canvas" style="display: none;"></canvas>
+                </div>
+                
+                <div class="mt-3">
+                    <button id="capturar" class="btn btn-success" disabled>📸 Capturar Foto</button>
+                    <button id="cadastrar" class="btn btn-warning" disabled>✅ Cadastrar</button>
+                    <button id="pararCamera" class="btn btn-secondary">⏹️ Parar Câmera</button>
+                </div>
+                
+                <div class="mt-3">
+                    <div class="alert alert-info">
+                        <small>📹 A câmera inicia automaticamente. Posicione seu rosto no centro da tela e clique em "Capturar Foto".</small>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-6">
+                <h5>Imagem Capturada:</h5>
+                <img id="imagemCapturada" class="img-fluid border" style="display: none;">
+                
+                <div id="resultado" class="mt-3"></div>
+                
+                <div id="deteccaoStatus" class="mt-3">
+                    <div class="alert alert-secondary">
+                        <strong>Status:</strong> <span id="statusTexto">Iniciando câmera...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+    <script>
+        let video, canvas, context, imagemCapturada, overlay, overlayContext;
+        let deteccaoAtiva = false;
+        let intervalId;
+        
+        // Iniciar câmera automaticamente
+        window.addEventListener('load', iniciarCameraAutomaticamente);
+        
+        async function iniciarCameraAutomaticamente() {
+            video = document.getElementById('video');
+            overlay = document.getElementById('overlay');
+            overlayContext = overlay.getContext('2d');
+            
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { 
+                        width: { ideal: 640 }, 
+                        height: { ideal: 480 } 
+                    } 
+                });
+                video.srcObject = stream;
+                
+                video.addEventListener('loadedmetadata', () => {
+                    // Aguardar um frame para garantir que o vídeo tenha o tamanho correto
+                    video.addEventListener('loadeddata', () => {
+                        redimensionarOverlay();
+                        document.getElementById('capturar').disabled = false;
+                        atualizarStatus('Câmera ativa - Posicione seu rosto', 'success');
+                        iniciarDeteccaoTempReal();
+                    });
+                });
+                
+            } catch (err) {
+                atualizarStatus('Erro ao acessar câmera: ' + err.message, 'danger');
+            }
+        }
+        
+        function redimensionarOverlay() {
+            // Obter dimensões reais do elemento video no DOM
+            const videoRect = video.getBoundingClientRect();
+            const videoStyle = getComputedStyle(video);
+            
+            // Usar as dimensões renderizadas do vídeo
+            overlay.width = video.offsetWidth;
+            overlay.height = video.offsetHeight;
+            
+            // Garantir que o overlay está posicionado corretamente
+            overlay.style.width = video.offsetWidth + 'px';
+            overlay.style.height = video.offsetHeight + 'px';
+            
+            console.log('Video dimensions:', video.videoWidth, 'x', video.videoHeight);
+            console.log('Overlay dimensions:', overlay.width, 'x', overlay.height);
+            console.log('Video element size:', video.offsetWidth, 'x', video.offsetHeight);
+        }
+        
+        // Observar mudanças no tamanho da janela
+        window.addEventListener('resize', () => {
+            if (video && video.videoWidth > 0) {
+                redimensionarOverlay();
+            }
+        });
+        
+        function iniciarDeteccaoTempReal() {
+            deteccaoAtiva = true;
+            intervalId = setInterval(detectarRostoTempReal, 200); // Aumentado para 200ms
+        }
+        
+        function pararDeteccaoTempReal() {
+            deteccaoAtiva = false;
+            if (intervalId) {
+                clearInterval(intervalId);
+            }
+            limparOverlay();
+        }
+        
+        async function detectarRostoTempReal() {
+            if (!deteccaoAtiva || !video.videoWidth || !video.videoHeight) return;
+            
+            // Capturar frame atual
+            const tempCanvas = document.createElement('canvas');
+            const tempContext = tempCanvas.getContext('2d');
+            tempCanvas.width = video.videoWidth;
+            tempCanvas.height = video.videoHeight;
+            tempContext.drawImage(video, 0, 0);
+            
+            const imageData = tempCanvas.toDataURL('image/jpeg', 0.8); // Reduzir qualidade
+            
+            try {
+                const response = await fetch('/api/detectar_rosto', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ imagem: imageData })
+                });
+                
+                const data = await response.json();
+                
+                if (data.rostos && data.rostos.length > 0) {
+                    desenharCaixasRosto(data.rostos);
+                    atualizarStatus(`${data.rostos.length} rosto(s) detectado(s)`, 'success');
+                } else {
+                    limparOverlay();
+                    atualizarStatus('Nenhum rosto detectado', 'warning');
+                }
+            } catch (err) {
+                // Ignorar erros de rede para não spam no console
+            }
+        }
+        
+        function desenharCaixasRosto(rostos) {
+            limparOverlay();
+            
+            rostos.forEach(rosto => {
+                const { top, right, bottom, left } = rosto.localizacao;
+                
+                // Calcular escala baseada nas dimensões reais do elemento video
+                const scaleX = overlay.width / video.videoWidth;
+                const scaleY = overlay.height / video.videoHeight;
+                
+                const x = left * scaleX;
+                const y = top * scaleY;
+                const width = (right - left) * scaleX;
+                const height = (bottom - top) * scaleY;
+                
+                // Desenhar retângulo verde
+                overlayContext.strokeStyle = '#00ff00';
+                overlayContext.lineWidth = 3;
+                overlayContext.strokeRect(x, y, width, height);
+                
+                // Desenhar fundo para o texto
+                overlayContext.fillStyle = 'rgba(0, 255, 0, 0.8)';
+                overlayContext.fillRect(x, y - 25, width, 20);
+                
+                // Desenhar texto
+                overlayContext.fillStyle = '#000000';
+                overlayContext.font = 'bold 12px Arial';
+                overlayContext.textAlign = 'center';
+                overlayContext.fillText('Rosto Detectado', x + width/2, y - 10);
+                overlayContext.textAlign = 'start';
+            });
+        }
+        
+        function limparOverlay() {
+            overlayContext.clearRect(0, 0, overlay.width, overlay.height);
+        }
+        
+        function atualizarStatus(texto, tipo = 'secondary') {
+            const statusElement = document.getElementById('statusTexto');
+            const alertElement = document.getElementById('deteccaoStatus').firstElementChild;
+            
+            statusElement.textContent = texto;
+            alertElement.className = `alert alert-${tipo}`;
+        }
+        
+        document.getElementById('capturar').addEventListener('click', () => {
+            canvas = document.getElementById('canvas');
+            context = canvas.getContext('2d');
+            
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            context.drawImage(video, 0, 0);
+            
+            imagemCapturada = canvas.toDataURL('image/jpeg');
+            
+            const imgElement = document.getElementById('imagemCapturada');
+            imgElement.src = imagemCapturada;
+            imgElement.style.display = 'block';
+            
+            document.getElementById('cadastrar').disabled = false;
+            atualizarStatus('Foto capturada! Agora você pode cadastrar.', 'info');
+        });
+        
+        document.getElementById('pararCamera').addEventListener('click', () => {
+            pararDeteccaoTempReal();
+            pararVideoStream(video);
+            atualizarStatus('Câmera parada', 'secondary');
+            document.getElementById('capturar').disabled = true;
+        });
+        
+        document.getElementById('cadastrar').addEventListener('click', async () => {
+            const nome = document.getElementById('nome').value.trim();
+            
+            if (!nome) {
+                alert('Por favor, digite um nome.');
+                return;
+            }
+            
+            if (!imagemCapturada) {
+                alert('Por favor, capture uma imagem primeiro.');
+                return;
+            }
+            
+            try {
+                // Mostrar indicador de carregamento
+                document.getElementById('cadastrar').disabled = true;
+                document.getElementById('cadastrar').textContent = '⏳ Cadastrando...';
+                
+                const response = await fetch('/api/cadastrar', {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    body: JSON.stringify({ 
+                        nome: nome, 
+                        imagem: imagemCapturada 
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const data = await response.json();
+                
+                if (data.sucesso) {
+                    document.getElementById('resultado').innerHTML = 
+                        `<div class="alert alert-success">${data.sucesso}</div>`;
+                    
+                    // Limpar formulário
+                    document.getElementById('nome').value = '';
+                    document.getElementById('imagemCapturada').style.display = 'none';
+                    document.getElementById('cadastrar').disabled = true;
+                    atualizarStatus('Pessoa cadastrada com sucesso!', 'success');
+                } else if (data.erro) {
+                    document.getElementById('resultado').innerHTML = 
+                        `<div class="alert alert-danger">${data.erro}</div>`;
+                } else {
+                    document.getElementById('resultado').innerHTML = 
+                        `<div class="alert alert-danger">Erro desconhecido no cadastro</div>`;
+                }
+            } catch (err) {
+                console.error('Erro detalhado:', err);
+                document.getElementById('resultado').innerHTML = 
+                    `<div class="alert alert-danger">Erro de conexão: ${err.message}</div>`;
+            } finally {
+                // Restaurar botão
+                document.getElementById('cadastrar').disabled = false;
+                document.getElementById('cadastrar').textContent = '✅ Cadastrar';
+            }
+        });
+        
+        // Parar detecção quando sair da página
+        window.addEventListener('beforeunload', () => {
+            pararDeteccaoTempReal();
+            pararVideoStream(video);
+        });
+    </script>
+</body>
+</html>

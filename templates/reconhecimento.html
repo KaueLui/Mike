@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reconhecer Rostos</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container">
+            <a class="navbar-brand" href="/">👁️ Reconhecimento Facial</a>
+            <div class="navbar-nav">
+                <a class="nav-link" href="/">Início</a>
+                <a class="nav-link" href="/cadastro">Cadastrar</a>
+                <a class="nav-link active" href="/reconhecimento">Reconhecer</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <h2>🔍 Reconhecimento em Tempo Real</h2>
+        
+        <div class="row">
+            <div class="col-md-8">
+                <div class="video-container" style="position: relative;">
+                    <video id="video" width="100%" height="400" autoplay style="border-radius: 8px;"></video>
+                    <canvas id="overlay" width="100%" height="400" style="position: absolute; top: 0; left: 0; pointer-events: none;"></canvas>
+                    <canvas id="canvas" style="display: none;"></canvas>
+                </div>
+                
+                <div class="mt-3">
+                    <button id="pararCamera" class="btn btn-danger">⏹️ Parar Reconhecimento</button>
+                    <button id="reiniciarCamera" class="btn btn-primary" style="display: none;">🔄 Reiniciar</button>
+                </div>
+                
+                <div class="mt-3">
+                    <label for="uploadImagem" class="form-label">Ou faça upload de uma imagem:</label>
+                    <input type="file" class="form-control" id="uploadImagem" accept="image/*">
+                </div>
+            </div>
+            
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>📊 Status do Sistema</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="statusReconhecimento">
+                            <div class="alert alert-info">
+                                <strong>Status:</strong> <span id="statusTexto">Iniciando...</span>
+                            </div>
+                        </div>
+                        
+                        <div id="pessoasDetectadas" class="mt-3">
+                            <h6>Pessoas Detectadas:</h6>
+                            <div id="listaPessoas" class="list-group">
+                                <!-- Lista será preenchida dinamicamente -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card mt-3">
+                    <div class="card-header">
+                        <h6>📈 Estatísticas</h6>
+                    </div>
+                    <div class="card-body">
+                        <p><strong>Frames processados:</strong> <span id="framesProcessados">0</span></p>
+                        <p><strong>Rostos detectados:</strong> <span id="rostosDetectados">0</span></p>
+                        <p><strong>Pessoas reconhecidas:</strong> <span id="pessoasReconhecidas">0</span></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+    <script>
+        let video, canvas, context, overlay, overlayContext;
+        let reconhecimentoAtivo = false;
+        let intervalId;
+        let ultimaRequisicao = 0;
+        let requisicaoEmAndamento = false;
+        let ultimoResultado = null;
+        let contadorFrames = 0;
+        
+        let estatisticas = {
+            frames: 0,
+            rostosDetectados: 0,
+            pessoasReconhecidas: 0,
+            requisicoes: 0
+        };
+        let ultimasPessoas = new Map();
+        
+        // Iniciar reconhecimento automaticamente
+        window.addEventListener('load', iniciarReconhecimentoAutomatico);
+        
+        async function iniciarReconhecimentoAutomatico() {
+            video = document.getElementById('video');
+            overlay = document.getElementById('overlay');
+            overlayContext = overlay.getContext('2d');
+            
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { 
+                        width: { ideal: 640 }, 
+                        height: { ideal: 480 } 
+                    } 
+                });
+                video.srcObject = stream;
+                
+                video.addEventListener('loadedmetadata', () => {
+                    video.addEventListener('loadeddata', () => {
+                        redimensionarOverlay();
+                        atualizarStatus('Reconhecimento ativo', 'success');
+                        iniciarReconhecimentoTempReal();
+                    });
+                });
+                
+            } catch (err) {
+                atualizarStatus('Erro ao acessar câmera: ' + err.message, 'danger');
+            }
+        }
+        
+        function redimensionarOverlay() {
+            // Sincronizar dimensões do overlay com o vídeo
+            overlay.width = video.offsetWidth;
+            overlay.height = video.offsetHeight;
+            overlay.style.width = video.offsetWidth + 'px';
+            overlay.style.height = video.offsetHeight + 'px';
+            
+            console.log('Video stream:', video.videoWidth, 'x', video.videoHeight);
+            console.log('Video element:', video.offsetWidth, 'x', video.offsetHeight);
+            console.log('Overlay:', overlay.width, 'x', overlay.height);
+        }
+        
+        // Redimensionar quando a janela muda
+        window.addEventListener('resize', () => {
+            if (video && video.videoWidth > 0) {
+                setTimeout(redimensionarOverlay, 100);
+            }
+        });
+        
+        function iniciarReconhecimentoTempReal() {
+            reconhecimentoAtivo = true;
+            // Reduzir frequência para 1 segundo
+            intervalId = setInterval(reconhecerRostoTempReal, 1000);
+        }
+        
+        function pararReconhecimentoTempReal() {
+            reconhecimentoAtivo = false;
+            if (intervalId) {
+                clearInterval(intervalId);
+            }
+            limparOverlay();
+            requisicaoEmAndamento = false;
+        }
+        
+        async function reconhecerRostoTempReal() {
+            if (!reconhecimentoAtivo || !video.videoWidth || !video.videoHeight) return;
+            
+            // Controle de concorrência
+            if (requisicaoEmAndamento) {
+                console.log('⏳ Requisição em andamento, aguardando...');
+                return;
+            }
+            
+            contadorFrames++;
+            const agora = Date.now();
+            
+            // Debounce: aguardar pelo menos 800ms entre requisições
+            if (agora - ultimaRequisicao < 800) {
+                // Usar último resultado se disponível
+                if (ultimoResultado) {
+                    desenharResultados(ultimoResultado.rostos);
+                }
+                return;
+            }
+            
+            requisicaoEmAndamento = true;
+            ultimaRequisicao = agora;
+            
+            try {
+                // Capturar frame com resolução reduzida
+                const tempCanvas = document.createElement('canvas');
+                const tempContext = tempCanvas.getContext('2d');
+                
+                // Reduzir resolução significativamente
+                const scale = 0.4;
+                tempCanvas.width = video.videoWidth * scale;
+                tempCanvas.height = video.videoHeight * scale;
+                tempContext.drawImage(video, 0, 0, tempCanvas.width, tempCanvas.height);
+                
+                const imageData = tempCanvas.toDataURL('image/jpeg', 0.5);
+                
+                estatisticas.requisicoes++;
+                atualizarEstatisticas();
+                
+                const response = await fetch('/api/reconhecer', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ imagem: imageData })
+                });
+                
+                const data = await response.json();
+                ultimoResultado = data;
+                
+                processarResultado(data);
+                
+            } catch (err) {
+                if (estatisticas.requisicoes % 10 === 0) {
+                    console.warn('Erro no reconhecimento:', err.message);
+                }
+                // Usar último resultado em caso de erro
+                if (ultimoResultado) {
+                    desenharResultados(ultimoResultado.rostos);
+                }
+            } finally {
+                requisicaoEmAndamento = false;
+            }
+        }
+        
+        function processarResultado(data) {
+            estatisticas.frames++;
+            
+            if (data.rostos && data.rostos.length > 0) {
+                estatisticas.rostosDetectados += data.rostos.length;
+                desenharResultados(data.rostos);
+                atualizarListaPessoas(data.rostos);
+                atualizarStatus(`${data.rostos.length} pessoa(s) detectada(s)`, 'success');
+            } else {
+                limparOverlay();
+                limparListaPessoas();
+                atualizarStatus('Nenhuma pessoa detectada', 'warning');
+            }
+            
+            atualizarEstatisticas();
+        }
+        
+        function desenharResultados(rostos) {
+            limparOverlay();
+            
+            if (!rostos || rostos.length === 0) return;
+            
+            rostos.forEach(rosto => {
+                const { top, right, bottom, left } = rosto.localizacao;
+                
+                // Calcular escala correta baseada nas dimensões reais
+                const scaleX = overlay.width / video.videoWidth;
+                const scaleY = overlay.height / video.videoHeight;
+                
+                // Aplicar escala às coordenadas
+                const x = left * scaleX;
+                const y = top * scaleY;
+                const width = (right - left) * scaleX;
+                const height = (bottom - top) * scaleY;
+                
+                // Validar coordenadas
+                if (x < 0 || y < 0 || width <= 0 || height <= 0) {
+                    console.warn('Coordenadas inválidas:', { x, y, width, height });
+                    return;
+                }
+                
+                // Cor baseada no reconhecimento
+                const cor = rosto.nome === 'Desconhecido' ? '#ff6b6b' : '#51cf66';
+                
+                // Desenhar retângulo com bordas mais grossas
+                overlayContext.strokeStyle = cor;
+                overlayContext.lineWidth = 4;
+                overlayContext.strokeRect(x, y, width, height);
+                
+                // Calcular tamanho do texto baseado no tamanho da caixa
+                const fontSize = Math.max(14, Math.min(18, width / 8));
+                const textHeight = fontSize + 8;
+                
+                // Desenhar fundo para o texto
+                overlayContext.fillStyle = cor;
+                overlayContext.fillRect(x, y - textHeight, width, textHeight);
+                
+                // Desenhar texto
+                overlayContext.fillStyle = '#ffffff';
+                overlayContext.font = `bold ${fontSize}px Arial`;
+                overlayContext.textAlign = 'center';
+                overlayContext.textBaseline = 'middle';
+                overlayContext.fillText(rosto.nome, x + width/2, y - textHeight/2);
+                
+                // Resetar alinhamento
+                overlayContext.textAlign = 'start';
+                overlayContext.textBaseline = 'alphabetic';
+                
+                // Debug: mostrar coordenadas
+                console.log(`Rosto ${rosto.nome}:`, {
+                    original: { top, right, bottom, left },
+                    scaled: { x: x.toFixed(1), y: y.toFixed(1), width: width.toFixed(1), height: height.toFixed(1) },
+                    scales: { scaleX: scaleX.toFixed(3), scaleY: scaleY.toFixed(3) }
+                });
+            });
+        }
+        
+        function atualizarListaPessoas(rostos) {
+            const agora = Date.now();
+            const listaPessoas = document.getElementById('listaPessoas');
+            
+            // Limpar lista
+            listaPessoas.innerHTML = '';
+            
+            // Contabilizar pessoas únicas
+            const pessoasUnicas = new Set();
+            
+            rostos.forEach((rosto, index) => {
+                const chave = rosto.nome;
+                ultimasPessoas.set(chave, agora);
+                pessoasUnicas.add(chave);
+                
+                const classe = rosto.nome === 'Desconhecido' ? 'list-group-item-warning' : 'list-group-item-success';
+                const icone = rosto.nome === 'Desconhecido' ? '❓' : '✅';
+                
+                const item = document.createElement('div');
+                item.className = `list-group-item ${classe}`;
+                item.innerHTML = `${icone} ${rosto.nome}`;
+                listaPessoas.appendChild(item);
+            });
+            
+            estatisticas.pessoasReconhecidas = pessoasUnicas.size;
+        }
+        
+        function limparListaPessoas() {
+            document.getElementById('listaPessoas').innerHTML = 
+                '<div class="list-group-item">Nenhuma pessoa detectada</div>';
+        }
+        
+        function limparOverlay() {
+            overlayContext.clearRect(0, 0, overlay.width, overlay.height);
+        }
+        
+        function atualizarStatus(texto, tipo = 'info') {
+            const statusElement = document.getElementById('statusTexto');
+            const alertElement = document.getElementById('statusReconhecimento').firstElementChild;
+            
+            statusElement.textContent = texto;
+            alertElement.className = `alert alert-${tipo}`;
+        }
+        
+        function atualizarEstatisticas() {
+            document.getElementById('framesProcessados').textContent = estatisticas.frames;
+            document.getElementById('rostosDetectados').textContent = estatisticas.rostosDetectados;
+            document.getElementById('pessoasReconhecidas').textContent = estatisticas.pessoasReconhecidas;
+            
+            // Adicionar contador de requisições
+            const reqElement = document.querySelector('[data-requisicoes]') || 
+                              document.createElement('p');
+            if (!reqElement.hasAttribute('data-requisicoes')) {
+                reqElement.setAttribute('data-requisicoes', 'true');
+                reqElement.innerHTML = '<strong>Requisições HTTP:</strong> <span id="totalRequisicoes">0</span>';
+                document.querySelector('.card-body').appendChild(reqElement);
+            }
+            document.getElementById('totalRequisicoes').textContent = estatisticas.requisicoes;
+        }
+        
+        document.getElementById('pararCamera').addEventListener('click', () => {
+            pararReconhecimentoTempReal();
+            pararVideoStream(video);
+            atualizarStatus('Reconhecimento parado', 'secondary');
+            document.getElementById('pararCamera').style.display = 'none';
+            document.getElementById('reiniciarCamera').style.display = 'inline-block';
+        });
+        
+        document.getElementById('reiniciarCamera').addEventListener('click', () => {
+            iniciarReconhecimentoAutomatico();
+            document.getElementById('reiniciarCamera').style.display = 'none';
+            document.getElementById('pararCamera').style.display = 'inline-block';
+        });
+        
+        document.getElementById('uploadImagem').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = async (event) => {
+                    // Parar reconhecimento temporariamente
+                    const estavaTivo = reconhecimentoAtivo;
+                    if (estavaTivo) pararReconhecimentoTempReal();
+                    
+                    await reconhecerImagemUpload(event.target.result);
+                    
+                    // Retomar após 2 segundos
+                    if (estavaTivo) {
+                        setTimeout(() => iniciarReconhecimentoTempReal(), 2000);
+                    }
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+        
+        async function reconhecerImagemUpload(imagemBase64) {
+            try {
+                const data = await fazerRequisicaoAPI('/api/reconhecer', {
+                    imagem: imagemBase64
+                });
+                
+                if (data.rostos && data.rostos.length > 0) {
+                    alert(`Upload: Encontrados ${data.rostos.length} rosto(s)\n` + 
+                          data.rostos.map(r => `- ${r.nome}`).join('\n'));
+                } else {
+                    alert('Upload: Nenhum rosto detectado na imagem.');
+                }
+                
+            } catch (err) {
+                alert(`Erro no upload: ${err.message}`);
+            }
+        }
+        
+        // Parar reconhecimento quando sair da página
+        window.addEventListener('beforeunload', () => {
+            pararReconhecimentoTempReal();
+            pararVideoStream(video);
+        });
+</script>
+</body>
+</html>

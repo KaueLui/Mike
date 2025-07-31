@@ -1,0 +1,72 @@
+/* Estilos personalizados para o sistema de reconhecimento facial */
+
+body {
+    background-color: #f8f9fa;
+}
+
+.card {
+    margin-bottom: 20px;
+    transition: transform 0.2s;
+}
+
+.card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+video {
+    border: 2px solid #dee2e6;
+    border-radius: 8px;
+}
+
+#imagemCapturada {
+    max-width: 100%;
+    border-radius: 8px;
+}
+
+.btn {
+    margin: 5px;
+}
+
+.alert {
+    margin-top: 15px;
+}
+
+.navbar-brand {
+    font-weight: bold;
+}
+
+.list-group-item {
+    background-color: white;
+    border-left: 4px solid #007bff;
+}
+
+.container {
+    max-width: 1200px;
+}
+
+.video-container {
+    position: relative;
+    display: inline-block;
+    width: 100%;
+}
+
+.video-container video {
+    width: 100%;
+    height: auto;
+    display: block;
+    border-radius: 8px;
+}
+
+.video-container canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+    border-radius: 8px;
+}
+
+/* Garantir que overlay não interfira */
+#overlay {
+    z-index: 10;
+}
