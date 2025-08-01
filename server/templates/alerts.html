@@ -1,0 +1,523 @@
+<!-- servidor-central/templates/alerts.html -->
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🚨 Alertas - Sistema de Segurança</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        .alert-item {
+            border-left: 4px solid;
+            transition: all 0.3s;
+        }
+        .alert-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        .alert-item.severity-info { border-left-color: #0dcaf0; }
+        .alert-item.severity-warning { border-left-color: #ffc107; }
+        .alert-item.severity-danger { border-left-color: #dc3545; }
+        
+        .filter-chip {
+            margin: 0.25rem;
+        }
+        .filter-chip.active {
+            background-color: #0d6efd !important;
+            color: white !important;
+        }
+        
+        .timeline-item {
+            border-left: 3px solid #dee2e6;
+            padding-left: 1rem;
+            margin-bottom: 1rem;
+            position: relative;
+        }
+        .timeline-item:before {
+            content: '';
+            position: absolute;
+            left: -6px;
+            top: 1rem;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background-color: #0dcaf0;
+        }
+        .timeline-item.severity-warning:before { background-color: #ffc107; }
+        .timeline-item.severity-danger:before { background-color: #dc3545; }
+    </style>
+</head>
+<body class="bg-light">
+    <nav class="navbar navbar-dark bg-primary">
+        <div class="container-fluid">
+            <a href="/" class="navbar-brand">
+                🛡️ Sistema de Segurança
+            </a>
+            <div class="d-flex">
+                <span class="badge bg-light text-dark me-2" id="statusConnection">
+                    🔴 Desconectado
+                </span>
+                <a href="/" class="btn btn-outline-light btn-sm">
+                    <i class="bi bi-house"></i> Dashboard
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <!-- Cabeçalho -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h2>🚨 Histórico de Alertas</h2>
+                        <p class="text-muted">Registro completo de detecções e eventos do sistema</p>
+                    </div>
+                    <div>
+                        <button class="btn btn-outline-primary" onclick="exportarAlertas()">
+                            <i class="bi bi-download"></i> Exportar
+                        </button>
+                        <button class="btn btn-outline-secondary" onclick="location.reload()">
+                            <i class="bi bi-arrow-clockwise"></i> Atualizar
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Estatísticas Rápidas -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h3 class="text-primary">{{ alerts | length }}</h3>
+                        <small class="text-muted">Total de Alertas</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h3 class="text-info">
+                            {{ alerts | selectattr('severity', 'equalto', 'info') | list | length }}
+                        </h3>
+                        <small class="text-muted">Detecções Normais</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h3 class="text-warning">
+                            {{ alerts | selectattr('severity', 'equalto', 'warning') | list | length }}
+                        </h3>
+                        <small class="text-muted">Pessoas Desconhecidas</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h3 class="text-danger">
+                            {{ alerts | selectattr('severity', 'equalto', 'danger') | list | length }}
+                        </h3>
+                        <small class="text-muted">Alertas Críticos</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Filtros -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-body">
+                        <h6 class="card-title">🔍 Filtros</h6>
+                        <div class="d-flex flex-wrap align-items-center">
+                            <span class="me-2">Severidade:</span>
+                            <span class="badge bg-secondary filter-chip active" data-filter="all">
+                                Todos
+                            </span>
+                            <span class="badge bg-info filter-chip" data-filter="info">
+                                Normais
+                            </span>
+                            <span class="badge bg-warning filter-chip" data-filter="warning">
+                                Desconhecidos
+                            </span>
+                            <span class="badge bg-danger filter-chip" data-filter="danger">
+                                Críticos
+                            </span>
+                        </div>
+                        <div class="mt-2">
+                            <div class="row">
+                                <div class="col-md-3">
+                                    <input type="date" class="form-control form-control-sm" id="dataInicio" 
+                                           placeholder="Data início">
+                                </div>
+                                <div class="col-md-3">
+                                    <input type="date" class="form-control form-control-sm" id="dataFim" 
+                                           placeholder="Data fim">
+                                </div>
+                                <div class="col-md-4">
+                                    <input type="text" class="form-control form-control-sm" id="filtroLocal" 
+                                           placeholder="Filtrar por localização">
+                                </div>
+                                <div class="col-md-2">
+                                    <button class="btn btn-primary btn-sm w-100" onclick="aplicarFiltros()">
+                                        Filtrar
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Lista de Alertas -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">📋 Alertas Recentes</h5>
+                    </div>
+                    <div class="card-body">
+                        {% if alerts %}
+                            <div id="alertsContainer">
+                                {% for alert in alerts %}
+                                <div class="alert-item timeline-item severity-{{ alert.severity }}" 
+                                     data-severity="{{ alert.severity }}"
+                                     data-location="{{ alert.location }}"
+                                     data-date="{{ alert.timestamp[:10] }}">
+                                    
+                                    <div class="card mb-2">
+                                        <div class="card-body py-3">
+                                            <div class="row align-items-center">
+                                                <!-- Info Principal -->
+                                                <div class="col-md-6">
+                                                    <div class="d-flex align-items-center">
+                                                        <div class="me-3">
+                                                            {% if alert.severity == 'info' %}
+                                                                <i class="bi bi-info-circle fs-3 text-info"></i>
+                                                            {% elif alert.severity == 'warning' %}
+                                                                <i class="bi bi-exclamation-triangle fs-3 text-warning"></i>
+                                                            {% else %}
+                                                                <i class="bi bi-exclamation-octagon fs-3 text-danger"></i>
+                                                            {% endif %}
+                                                        </div>
+                                                        <div>
+                                                            <h6 class="mb-1">
+                                                                <strong>{{ alert.node_id }}</strong> - {{ alert.location }}
+                                                            </h6>
+                                                            <p class="mb-0 text-muted">
+                                                                {{ alert.detected_faces | length }} rosto(s) detectado(s)
+                                                            </p>
+                                                            <small class="text-muted">
+                                                                <i class="bi bi-clock"></i> {{ alert.timestamp[:19] | replace('T', ' ') }}
+                                                            </small>
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                <!-- Pessoas Detectadas -->
+                                                <div class="col-md-4">
+                                                    {% if alert.detected_faces %}
+                                                        <div class="d-flex flex-wrap">
+                                                            {% for face in alert.detected_faces %}
+                                                                {% if face.nome and face.nome != 'Desconhecido' %}
+                                                                    <span class="badge bg-success me-1 mb-1">
+                                                                        <i class="bi bi-person-check"></i> {{ face.nome }}
+                                                                    </span>
+                                                                {% else %}
+                                                                    <span class="badge bg-warning me-1 mb-1">
+                                                                        <i class="bi bi-person-question"></i> Desconhecido
+                                                                    </span>
+                                                                {% endif %}
+                                                            {% endfor %}
+                                                        </div>
+                                                    {% else %}
+                                                        <span class="text-muted">Nenhuma pessoa identificada</span>
+                                                    {% endif %}
+                                                </div>
+
+                                                <!-- Ações -->
+                                                <div class="col-md-2 text-end">
+                                                    <div class="btn-group" role="group">
+                                                        <button class="btn btn-outline-primary btn-sm" 
+                                                                onclick="verDetalhesAlerta({{ alert.id }})"
+                                                                data-bs-toggle="tooltip" title="Ver detalhes">
+                                                            <i class="bi bi-eye"></i>
+                                                        </button>
+                                                        <button class="btn btn-outline-info btn-sm"
+                                                                onclick="verLocal('{{ alert.node_id }}')"
+                                                                data-bs-toggle="tooltip" title="Ver localização">
+                                                            <i class="bi bi-geo-alt"></i>
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+
+                            <!-- Paginação -->
+                            <div class="d-flex justify-content-center mt-4">
+                                <nav>
+                                    <ul class="pagination">
+                                        <li class="page-item disabled">
+                                            <span class="page-link">Anterior</span>
+                                        </li>
+                                        <li class="page-item active">
+                                            <span class="page-link">1</span>
+                                        </li>
+                                        <li class="page-item">
+                                            <a class="page-link" href="#" onclick="carregarPagina(2)">2</a>
+                                        </li>
+                                        <li class="page-item">
+                                            <a class="page-link" href="#" onclick="carregarPagina(3)">3</a>
+                                        </li>
+                                        <li class="page-item">
+                                            <a class="page-link" href="#" onclick="carregarPagina(2)">Próximo</a>
+                                        </li>
+                                    </ul>
+                                </nav>
+                            </div>
+
+                        {% else %}
+                            <div class="alert alert-info text-center">
+                                <i class="bi bi-info-circle fs-1"></i>
+                                <h5 class="mt-3">Nenhum alerta registrado</h5>
+                                <p>Os alertas aparecerão aqui quando os nós sensores detectarem atividade.</p>
+                            </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Detalhes do Alerta -->
+    <div class="modal fade" id="modalDetalhesAlerta" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">🔍 Detalhes do Alerta</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="detalhesAlertaContent">
+                    <!-- Conteúdo será preenchido dinamicamente -->
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
+    <script>
+        // Conectar ao WebSocket
+        const socket = io();
+        
+        socket.on('connect', () => {
+            console.log('✅ Conectado ao servidor');
+            document.getElementById('statusConnection').innerHTML = '🟢 Conectado';
+            document.getElementById('statusConnection').className = 'badge bg-success text-white me-2';
+        });
+        
+        socket.on('disconnect', () => {
+            console.log('❌ Desconectado do servidor');
+            document.getElementById('statusConnection').innerHTML = '🔴 Desconectado';
+            document.getElementById('statusConnection').className = 'badge bg-danger text-white me-2';
+        });
+
+        // Novo alerta em tempo real
+        socket.on('new_detection', (data) => {
+            console.log('🚨 Novo alerta:', data.alert);
+            adicionarNovoAlerta(data.alert);
+        });
+
+        // Inicializar tooltips
+        var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
+        var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+            return new bootstrap.Tooltip(tooltipTriggerEl)
+        });
+
+        // Filtros
+        document.querySelectorAll('.filter-chip').forEach(chip => {
+            chip.addEventListener('click', function() {
+                // Remover active de todos
+                document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+                // Adicionar active no clicado
+                this.classList.add('active');
+                
+                const filter = this.dataset.filter;
+                filtrarPorSeveridade(filter);
+            });
+        });
+
+        function filtrarPorSeveridade(severidade) {
+            const alertItems = document.querySelectorAll('.alert-item');
+            
+            alertItems.forEach(item => {
+                if (severidade === 'all' || item.dataset.severity === severidade) {
+                    item.style.display = 'block';
+                } else {
+                    item.style.display = 'none';
+                }
+            });
+        }
+
+        function aplicarFiltros() {
+            const dataInicio = document.getElementById('dataInicio').value;
+            const dataFim = document.getElementById('dataFim').value;
+            const local = document.getElementById('filtroLocal').value.toLowerCase();
+            
+            const alertItems = document.querySelectorAll('.alert-item');
+            
+            alertItems.forEach(item => {
+                let mostrar = true;
+                
+                // Filtro por data
+                if (dataInicio && item.dataset.date < dataInicio) mostrar = false;
+                if (dataFim && item.dataset.date > dataFim) mostrar = false;
+                
+                // Filtro por localização
+                if (local && !item.dataset.location.toLowerCase().includes(local)) mostrar = false;
+                
+                item.style.display = mostrar ? 'block' : 'none';
+            });
+        }
+
+        function verDetalhesAlerta(alertId) {
+            console.log('Ver detalhes do alerta:', alertId);
+            
+            // Simular dados do alerta
+            const detalhes = `
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6>Informações Gerais</h6>
+                        <p><strong>ID:</strong> ${alertId}</p>
+                        <p><strong>Tipo:</strong> Detecção Facial</p>
+                        <p><strong>Nó:</strong> camera-entrada</p>
+                        <p><strong>Localização:</strong> Entrada Principal</p>
+                        <p><strong>Data/Hora:</strong> ${new Date().toLocaleString()}</p>
+                    </div>
+                    <div class="col-md-6">
+                        <h6>Detecções</h6>
+                        <div class="alert alert-info">
+                            <strong>2 rostos detectados:</strong><br>
+                            • João Silva (conhecido)<br>
+                            • Pessoa desconhecida
+                        </div>
+                    </div>
+                </div>
+                <hr>
+                <h6>Imagem de Referência</h6>
+                <div class="alert alert-warning">
+                    <i class="bi bi-camera"></i> Função de captura de imagem será implementada em breve
+                </div>
+            `;
+            
+            document.getElementById('detalhesAlertaContent').innerHTML = detalhes;
+            new bootstrap.Modal(document.getElementById('modalDetalhesAlerta')).show();
+        }
+
+        function verLocal(nodeId) {
+            console.log('Ver localização do nó:', nodeId);
+            alert(`Localização do nó ${nodeId}\n\nEsta funcionalidade será implementada em breve.`);
+        }
+
+        function exportarAlertas() {
+            console.log('Exportando alertas...');
+            alert('Exportação será implementada em breve.\nFormatos: CSV, PDF, Excel');
+        }
+
+        function carregarPagina(pagina) {
+            console.log('Carregar página:', pagina);
+            alert(`Carregando página ${pagina}...`);
+        }
+
+        function adicionarNovoAlerta(alert) {
+            const container = document.getElementById('alertsContainer');
+            if (!container) return;
+            
+            const alertElement = criarElementoAlerta(alert);
+            container.insertBefore(alertElement, container.firstChild);
+            
+            // Manter apenas os 50 mais recentes visualmente
+            const alertas = container.children;
+            if (alertas.length > 50) {
+                container.removeChild(alertas[alertas.length - 1]);
+            }
+        }
+
+        function criarElementoAlerta(alert) {
+            const div = document.createElement('div');
+            div.className = `alert-item timeline-item severity-${alert.severity}`;
+            div.setAttribute('data-severity', alert.severity);
+            div.setAttribute('data-location', alert.location);
+            div.setAttribute('data-date', alert.timestamp.substring(0, 10));
+            
+            const facesDetectadas = alert.detected_faces || [];
+            const pessoasConhecidas = facesDetectadas.filter(f => f.nome !== 'Desconhecido');
+            
+            div.innerHTML = `
+                <div class="card mb-2">
+                    <div class="card-body py-3">
+                        <div class="row align-items-center">
+                            <div class="col-md-6">
+                                <div class="d-flex align-items-center">
+                                    <div class="me-3">
+                                        <i class="bi bi-${alert.severity === 'info' ? 'info-circle' : alert.severity === 'warning' ? 'exclamation-triangle' : 'exclamation-octagon'} fs-3 text-${alert.severity === 'info' ? 'info' : alert.severity}"></i>
+                                    </div>
+                                    <div>
+                                        <h6 class="mb-1">
+                                            <strong>${alert.node_id}</strong> - ${alert.location}
+                                        </h6>
+                                        <p class="mb-0 text-muted">
+                                            ${facesDetectadas.length} rosto(s) detectado(s)
+                                        </p>
+                                        <small class="text-muted">
+                                            <i class="bi bi-clock"></i> ${new Date(alert.timestamp).toLocaleString()}
+                                        </small>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="d-flex flex-wrap">
+                                    ${facesDetectadas.map(face => 
+                                        face.nome && face.nome !== 'Desconhecido' 
+                                            ? `<span class="badge bg-success me-1 mb-1"><i class="bi bi-person-check"></i> ${face.nome}</span>`
+                                            : `<span class="badge bg-warning me-1 mb-1"><i class="bi bi-person-question"></i> Desconhecido</span>`
+                                    ).join('')}
+                                </div>
+                            </div>
+                            <div class="col-md-2 text-end">
+                                <div class="btn-group" role="group">
+                                    <button class="btn btn-outline-primary btn-sm" 
+                                            onclick="verDetalhesAlerta(${alert.id})"
+                                            data-bs-toggle="tooltip" title="Ver detalhes">
+                                        <i class="bi bi-eye"></i>
+                                    </button>
+                                    <button class="btn btn-outline-info btn-sm"
+                                            onclick="verLocal('${alert.node_id}')"
+                                            data-bs-toggle="tooltip" title="Ver localização">
+                                        <i class="bi bi-geo-alt"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            return div;
+        }
+    </script>
+</body>
+</html>

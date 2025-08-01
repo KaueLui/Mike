@@ -1,0 +1,569 @@
+<!-- servidor-central/templates/nodes.html -->
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>📡 Gerenciar Nós - Sistema de Segurança</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        .node-card {
+            transition: all 0.3s;
+            border-left: 4px solid #dee2e6;
+        }
+        .node-card.online {
+            border-left-color: #198754;
+        }
+        .node-card.offline {
+            border-left-color: #dc3545;
+            opacity: 0.8;
+        }
+        .status-badge {
+            font-size: 0.75rem;
+        }
+        .stats-mini {
+            font-size: 0.8rem;
+            color: #6c757d;
+        }
+        .action-btn {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.75rem;
+        }
+    </style>
+</head>
+<body class="bg-light">
+    <nav class="navbar navbar-dark bg-primary">
+        <div class="container-fluid">
+            <a href="/" class="navbar-brand">
+                🛡️ Sistema de Segurança
+            </a>
+            <div class="d-flex">
+                <span class="badge bg-light text-dark me-2" id="statusConnection">
+                    🔴 Desconectado
+                </span>
+                <a href="/" class="btn btn-outline-light btn-sm">
+                    <i class="bi bi-house"></i> Dashboard
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <!-- Cabeçalho -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h2>📡 Gerenciar Nós Sensores</h2>
+                        <p class="text-muted">Monitore e configure os nós de câmeras do sistema</p>
+                    </div>
+                    <div>
+                        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#modalAdicionarNo">
+                            <i class="bi bi-plus-circle"></i> Adicionar Nó
+                        </button>
+                        <button class="btn btn-outline-secondary" onclick="location.reload()">
+                            <i class="bi bi-arrow-clockwise"></i> Atualizar
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Resumo -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h3 class="text-success" id="totalOnline">
+                            {{ nodes.values() | selectattr('status', 'equalto', 'online') | list | length }}
+                        </h3>
+                        <small class="text-muted">Nós Online</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h3 class="text-secondary" id="totalOffline">
+                            {{ nodes.values() | selectattr('status', 'equalto', 'offline') | list | length }}
+                        </h3>
+                        <small class="text-muted">Nós Offline</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h3 class="text-primary" id="totalNodes">{{ nodes | length }}</h3>
+                        <small class="text-muted">Total de Nós</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <h3 class="text-warning" id="totalDetections">
+                            {% set total = nodes.values() | map(attribute='stats.total_detections') | sum %}
+                            {{ total }}
+                        </h3>
+                        <small class="text-muted">Total Detecções</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Lista de Nós -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">📋 Lista de Nós Sensores</h5>
+                    </div>
+                    <div class="card-body">
+                        {% if nodes %}
+                            <div id="nodesContainer">
+                                {% for node_id, node in nodes.items() %}
+                                <div class="card node-card mb-3 {{ 'online' if node.status == 'online' else 'offline' }}" 
+                                     data-node-id="{{ node_id }}">
+                                    <div class="card-body">
+                                        <div class="row align-items-center">
+                                            <!-- Info do Nó -->
+                                            <div class="col-md-4">
+                                                <div class="d-flex align-items-center">
+                                                    <div class="me-3">
+                                                        <i class="bi bi-camera-video fs-2 text-{{ 'success' if node.status == 'online' else 'secondary' }}"></i>
+                                                    </div>
+                                                    <div>
+                                                        <h6 class="mb-1">{{ node.id }}</h6>
+                                                        <p class="mb-0 text-muted">
+                                                            <i class="bi bi-geo-alt"></i> {{ node.location }}
+                                                        </p>
+                                                        <small class="text-muted">{{ node.type | title }}</small>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <!-- Status -->
+                                            <div class="col-md-2 text-center">
+                                                <span class="badge bg-{{ 'success' if node.status == 'online' else 'secondary' }} status-badge">
+                                                    {{ '🟢 Online' if node.status == 'online' else '🔴 Offline' }}
+                                                </span>
+                                                <br>
+                                                <small class="stats-mini">
+                                                    Última atividade:<br>
+                                                    {{ node.last_seen[:19] if node.last_seen else 'N/A' }}
+                                                </small>
+                                            </div>
+
+                                            <!-- Estatísticas -->
+                                            <div class="col-md-3">
+                                                <div class="row text-center">
+                                                    <div class="col-6">
+                                                        <strong>{{ node.stats.total_detections }}</strong>
+                                                        <br>
+                                                        <small class="stats-mini">Total</small>
+                                                    </div>
+                                                    <div class="col-6">
+                                                        <strong>{{ node.stats.detections_today }}</strong>
+                                                        <br>
+                                                        <small class="stats-mini">Hoje</small>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <!-- Ações -->
+                                            <div class="col-md-3 text-end">
+                                                <div class="btn-group" role="group">
+                                                    <button class="btn btn-outline-primary action-btn" 
+                                                            onclick="editarNo('{{ node_id }}')"
+                                                            data-bs-toggle="tooltip" title="Editar">
+                                                        <i class="bi bi-pencil"></i>
+                                                    </button>
+                                                    <button class="btn btn-outline-info action-btn"
+                                                            onclick="verDetalhes('{{ node_id }}')"
+                                                            data-bs-toggle="tooltip" title="Detalhes">
+                                                        <i class="bi bi-info-circle"></i>
+                                                    </button>
+                                                    <button class="btn btn-outline-warning action-btn"
+                                                            onclick="reiniciarNo('{{ node_id }}')"
+                                                            data-bs-toggle="tooltip" title="Reiniciar">
+                                                        <i class="bi bi-arrow-clockwise"></i>
+                                                    </button>
+                                                    <button class="btn btn-outline-danger action-btn"
+                                                            onclick="removerNo('{{ node_id }}')"
+                                                            data-bs-toggle="tooltip" title="Remover">
+                                                        <i class="bi bi-trash"></i>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        {% else %}
+                            <div class="alert alert-info text-center">
+                                <i class="bi bi-info-circle fs-1"></i>
+                                <h5 class="mt-3">Nenhum nó sensor registrado</h5>
+                                <p>Adicione nós sensores para começar o monitoramento distribuído.</p>
+                                <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#modalAdicionarNo">
+                                    <i class="bi bi-plus-circle"></i> Adicionar Primeiro Nó
+                                </button>
+                            </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Instruções -->
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">📖 Como Conectar Nós Sensores</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6>📱 Usando IP Webcam (Android):</h6>
+                                <ol>
+                                    <li>Instale o app "IP Webcam" no Android</li>
+                                    <li>Configure uma senha (opcional)</li>
+                                    <li>Inicie o servidor no app</li>
+                                    <li>Use o IP mostrado: <code>http://IP:8080</code></li>
+                                </ol>
+                            </div>
+                            <div class="col-md-6">
+                                <h6>📹 Usando DroidCam:</h6>
+                                <ol>
+                                    <li>Instale o DroidCam no Android</li>
+                                    <li>Configure WiFi ou USB</li>
+                                    <li>Anote o IP e porta mostrados</li>
+                                    <li>Use: <code>http://IP:4747</code></li>
+                                </ol>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Adicionar Nó -->
+    <div class="modal fade" id="modalAdicionarNo" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">📡 Adicionar Novo Nó Sensor</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="formAdicionarNo">
+                        <div class="mb-3">
+                            <label for="nodeId" class="form-label">ID do Nó</label>
+                            <input type="text" class="form-control" id="nodeId" 
+                                   placeholder="Ex: camera-entrada" required>
+                            <small class="form-text text-muted">Identificador único para o nó</small>
+                        </div>
+                        <div class="mb-3">
+                            <label for="nodeLocation" class="form-label">Localização</label>
+                            <input type="text" class="form-control" id="nodeLocation" 
+                                   placeholder="Ex: Entrada Principal" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="nodeType" class="form-label">Tipo</label>
+                            <select class="form-select" id="nodeType">
+                                <option value="camera">Câmera IP</option>
+                                <option value="webcam">Webcam</option>
+                                <option value="mobile">Mobile (IP Webcam)</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="nodeUrl" class="form-label">URL (opcional)</label>
+                            <input type="text" class="form-control" id="nodeUrl" 
+                                   placeholder="http://192.168.1.100:8080">
+                            <small class="form-text text-muted">URL da câmera se conhecida</small>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="button" class="btn btn-primary" onclick="adicionarNo()">
+                        <i class="bi bi-plus-circle"></i> Adicionar Nó
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Editar Nó -->
+    <div class="modal fade" id="modalEditarNo" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">✏️ Editar Nó Sensor</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="formEditarNo">
+                        <input type="hidden" id="editNodeId">
+                        <div class="mb-3">
+                            <label for="editNodeLocation" class="form-label">Localização</label>
+                            <input type="text" class="form-control" id="editNodeLocation" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="editNodeType" class="form-label">Tipo</label>
+                            <select class="form-select" id="editNodeType">
+                                <option value="camera">Câmera IP</option>
+                                <option value="webcam">Webcam</option>
+                                <option value="mobile">Mobile (IP Webcam)</option>
+                            </select>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="button" class="btn btn-primary" onclick="salvarEdicaoNo()">
+                        <i class="bi bi-check-circle"></i> Salvar
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
+    <script>
+        // Conectar ao WebSocket
+        const socket = io();
+        
+        socket.on('connect', () => {
+            console.log('✅ Conectado ao servidor');
+            document.getElementById('statusConnection').innerHTML = '🟢 Conectado';
+            document.getElementById('statusConnection').className = 'badge bg-success text-white me-2';
+        });
+        
+        socket.on('disconnect', () => {
+            console.log('❌ Desconectado do servidor');
+            document.getElementById('statusConnection').innerHTML = '🔴 Desconectado';
+            document.getElementById('statusConnection').className = 'badge bg-danger text-white me-2';
+        });
+        
+        // Nó registrado
+        socket.on('node_registered', (data) => {
+            console.log('📡 Novo nó registrado:', data.node);
+            adicionarNoNaLista(data.node);
+            atualizarContadores();
+        });
+        
+        // Status do nó mudou
+        socket.on('node_status_changed', (data) => {
+            console.log('🔄 Status do nó mudou:', data);
+            atualizarStatusNoNaLista(data);
+            atualizarContadores();
+        });
+
+        // Inicializar tooltips
+        var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
+        var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+            return new bootstrap.Tooltip(tooltipTriggerEl)
+        });
+
+        function adicionarNo() {
+            const form = document.getElementById('formAdicionarNo');
+            const formData = new FormData(form);
+            
+            const nodeData = {
+                node_id: document.getElementById('nodeId').value,
+                location: document.getElementById('nodeLocation').value,
+                type: document.getElementById('nodeType').value,
+                url: document.getElementById('nodeUrl').value || null
+            };
+            
+            // Validar dados
+            if (!nodeData.node_id || !nodeData.location) {
+                alert('Preencha todos os campos obrigatórios!');
+                return;
+            }
+            
+            // Simular registro (em produção, seria via API)
+            console.log('Adicionando nó:', nodeData);
+            
+            // Fechar modal
+            bootstrap.Modal.getInstance(document.getElementById('modalAdicionarNo')).hide();
+            
+            // Limpar formulário
+            form.reset();
+            
+            // Mostrar sucesso
+            alert(`Nó ${nodeData.node_id} será adicionado quando se conectar ao sistema.`);
+        }
+
+        function editarNo(nodeId) {
+            // Buscar dados do nó
+            const nodeCard = document.querySelector(`[data-node-id="${nodeId}"]`);
+            if (!nodeCard) return;
+            
+            // Preencher modal de edição (simplificado)
+            document.getElementById('editNodeId').value = nodeId;
+            document.getElementById('editNodeLocation').value = 'Nova localização';
+            document.getElementById('editNodeType').value = 'camera';
+            
+            // Mostrar modal
+            new bootstrap.Modal(document.getElementById('modalEditarNo')).show();
+        }
+
+        function salvarEdicaoNo() {
+            const nodeId = document.getElementById('editNodeId').value;
+            console.log('Salvando edição do nó:', nodeId);
+            
+            // Fechar modal
+            bootstrap.Modal.getInstance(document.getElementById('modalEditarNo')).hide();
+            
+            alert('Configurações do nó atualizadas!');
+        }
+
+        function verDetalhes(nodeId) {
+            console.log('Ver detalhes do nó:', nodeId);
+            alert(`Detalhes do nó ${nodeId}\n\nEsta funcionalidade será implementada em breve.`);
+        }
+
+        function reiniciarNo(nodeId) {
+            if (confirm(`Deseja reiniciar o nó ${nodeId}?`)) {
+                console.log('Reiniciando nó:', nodeId);
+                alert('Comando de reinicialização enviado!');
+            }
+        }
+
+        function removerNo(nodeId) {
+            if (confirm(`Deseja remover permanentemente o nó ${nodeId}?`)) {
+                console.log('Removendo nó:', nodeId);
+                document.querySelector(`[data-node-id="${nodeId}"]`).remove();
+                atualizarContadores();
+                alert('Nó removido com sucesso!');
+            }
+        }
+
+        function adicionarNoNaLista(node) {
+            const container = document.getElementById('nodesContainer');
+            
+            // Criar elemento do nó
+            const nodeElement = criarElementoNo(node);
+            container.appendChild(nodeElement);
+        }
+
+        function criarElementoNo(node) {
+            const div = document.createElement('div');
+            div.className = `card node-card mb-3 ${node.status === 'online' ? 'online' : 'offline'}`;
+            div.setAttribute('data-node-id', node.id);
+            
+            div.innerHTML = `
+                <div class="card-body">
+                    <div class="row align-items-center">
+                        <div class="col-md-4">
+                            <div class="d-flex align-items-center">
+                                <div class="me-3">
+                                    <i class="bi bi-camera-video fs-2 text-${node.status === 'online' ? 'success' : 'secondary'}"></i>
+                                </div>
+                                <div>
+                                    <h6 class="mb-1">${node.id}</h6>
+                                    <p class="mb-0 text-muted">
+                                        <i class="bi bi-geo-alt"></i> ${node.location}
+                                    </p>
+                                    <small class="text-muted">${node.type}</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-2 text-center">
+                            <span class="badge bg-${node.status === 'online' ? 'success' : 'secondary'} status-badge">
+                                ${node.status === 'online' ? '🟢 Online' : '🔴 Offline'}
+                            </span>
+                            <br>
+                            <small class="stats-mini">
+                                Última atividade:<br>
+                                ${new Date(node.last_seen).toLocaleString()}
+                            </small>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="row text-center">
+                                <div class="col-6">
+                                    <strong>${node.stats?.total_detections || 0}</strong>
+                                    <br>
+                                    <small class="stats-mini">Total</small>
+                                </div>
+                                <div class="col-6">
+                                    <strong>${node.stats?.detections_today || 0}</strong>
+                                    <br>
+                                    <small class="stats-mini">Hoje</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3 text-end">
+                            <div class="btn-group" role="group">
+                                <button class="btn btn-outline-primary action-btn" 
+                                        onclick="editarNo('${node.id}')"
+                                        data-bs-toggle="tooltip" title="Editar">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                                <button class="btn btn-outline-info action-btn"
+                                        onclick="verDetalhes('${node.id}')"
+                                        data-bs-toggle="tooltip" title="Detalhes">
+                                    <i class="bi bi-info-circle"></i>
+                                </button>
+                                <button class="btn btn-outline-warning action-btn"
+                                        onclick="reiniciarNo('${node.id}')"
+                                        data-bs-toggle="tooltip" title="Reiniciar">
+                                    <i class="bi bi-arrow-clockwise"></i>
+                                </button>
+                                <button class="btn btn-outline-danger action-btn"
+                                        onclick="removerNo('${node.id}')"
+                                        data-bs-toggle="tooltip" title="Remover">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            return div;
+        }
+
+        function atualizarStatusNoNaLista(data) {
+            const nodeElement = document.querySelector(`[data-node-id="${data.node_id}"]`);
+            if (nodeElement) {
+                const isOnline = data.status === 'online';
+                
+                nodeElement.className = `card node-card mb-3 ${isOnline ? 'online' : 'offline'}`;
+                
+                const badge = nodeElement.querySelector('.badge');
+                if (badge) {
+                    badge.className = `badge bg-${isOnline ? 'success' : 'secondary'} status-badge`;
+                    badge.textContent = isOnline ? '🟢 Online' : '🔴 Offline';
+                }
+                
+                const icon = nodeElement.querySelector('.bi-camera-video');
+                if (icon) {
+                    icon.className = `bi bi-camera-video fs-2 text-${isOnline ? 'success' : 'secondary'}`;
+                }
+            }
+        }
+
+        function atualizarContadores() {
+            const nodeCards = document.querySelectorAll('.node-card');
+            let online = 0, offline = 0;
+            
+            nodeCards.forEach(card => {
+                if (card.classList.contains('online')) online++;
+                else offline++;
+            });
+            
+            document.getElementById('totalOnline').textContent = online;
+            document.getElementById('totalOffline').textContent = offline;
+            document.getElementById('totalNodes').textContent = online + offline;
+        }
+    </script>
+</body>
+</html>

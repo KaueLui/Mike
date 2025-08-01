@@ -1,0 +1,480 @@
+<!-- servidor-central/templates/dashboard.html -->
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🛡️ Sistema de Segurança Distribuído</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        .card-stat {
+            border-left: 4px solid;
+            transition: transform 0.2s;
+        }
+        .card-stat:hover {
+            transform: translateY(-2px);
+        }
+        .card-stat.primary { border-left-color: #0d6efd; }
+        .card-stat.success { border-left-color: #198754; }
+        .card-stat.warning { border-left-color: #ffc107; }
+        .card-stat.info { border-left-color: #0dcaf0; }
+        
+        .status-online { color: #198754; }
+        .status-offline { color: #dc3545; }
+        
+        .alert-item {
+            border-left: 4px solid;
+            margin-bottom: 0.5rem;
+        }
+        .alert-item.severity-info { border-left-color: #0dcaf0; }
+        .alert-item.severity-warning { border-left-color: #ffc107; }
+        .alert-item.severity-danger { border-left-color: #dc3545; }
+        
+        #alertsContainer {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .node-card {
+            transition: all 0.3s;
+        }
+        .node-card.online {
+            border-left: 4px solid #198754;
+        }
+        .node-card.offline {
+            border-left: 4px solid #dc3545;
+            opacity: 0.7;
+        }
+    </style>
+</head>
+<body class="bg-light">
+    <nav class="navbar navbar-dark bg-primary">
+        <div class="container-fluid">
+            <span class="navbar-brand mb-0 h1">
+                🛡️ Sistema de Segurança Distribuído
+            </span>
+            <div class="d-flex">
+                <span class="badge bg-light text-dark me-2" id="statusConnection">
+                    🔴 Desconectado
+                </span>
+                <button class="btn btn-outline-light btn-sm" onclick="location.reload()">
+                    <i class="bi bi-arrow-clockwise"></i> Atualizar
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <!-- Estatísticas Gerais -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card card-stat primary">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h6 class="card-subtitle text-muted">Nós Ativos</h6>
+                                <h3 class="card-title mb-0" id="statActiveNodes">{{ stats.active_nodes }}</h3>
+                            </div>
+                            <i class="bi bi-camera-video fs-1 text-primary"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-3">
+                <div class="card card-stat success">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h6 class="card-subtitle text-muted">Pessoas Cadastradas</h6>
+                                <h3 class="card-title mb-0" id="statKnownFaces">{{ stats.known_faces }}</h3>
+                            </div>
+                            <i class="bi bi-people fs-1 text-success"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-3">
+                <div class="card card-stat warning">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h6 class="card-subtitle text-muted">Detecções Hoje</h6>
+                                <h3 class="card-title mb-0" id="statTotalDetections">{{ stats.total_detections }}</h3>
+                            </div>
+                            <i class="bi bi-eye fs-1 text-warning"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-3">
+                <div class="card card-stat info">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h6 class="card-subtitle text-muted">Alertas Recentes</h6>
+                                <h3 class="card-title mb-0" id="statRecentAlerts">{{ recent_alerts|length }}</h3>
+                            </div>
+                            <i class="bi bi-bell fs-1 text-info"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <!-- Nós Conectados -->
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">📡 Nós Sensores</h5>
+                        <a href="/nodes" class="btn btn-outline-primary btn-sm">
+                            <i class="bi bi-gear"></i> Gerenciar
+                        </a>
+                    </div>
+                    <div class="card-body">
+                        <div id="nodesContainer">
+                            {% if nodes %}
+                                {% for node_id, node in nodes.items() %}
+                                <div class="card node-card mb-2 {{ 'online' if node.status == 'online' else 'offline' }}" 
+                                     data-node-id="{{ node_id }}">
+                                    <div class="card-body py-2">
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <div>
+                                                <strong>{{ node.id }}</strong>
+                                                <br>
+                                                <small class="text-muted">📍 {{ node.location }}</small>
+                                            </div>
+                                            <div class="text-end">
+                                                <span class="badge bg-{{ 'success' if node.status == 'online' else 'secondary' }}">
+                                                    {{ '🟢 Online' if node.status == 'online' else '🔴 Offline' }}
+                                                </span>
+                                                <br>
+                                                <small class="text-muted">
+                                                    {{ node.stats.total_detections }} detecções
+                                                </small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            {% else %}
+                                <div class="alert alert-info">
+                                    <i class="bi bi-info-circle"></i>
+                                    Nenhum nó sensor conectado ainda.
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Alertas Recentes -->
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">🚨 Alertas Recentes</h5>
+                        <a href="/alerts" class="btn btn-outline-primary btn-sm">
+                            <i class="bi bi-clock-history"></i> Ver Todos
+                        </a>
+                    </div>
+                    <div class="card-body">
+                        <div id="alertsContainer">
+                            {% if recent_alerts %}
+                                {% for alert in recent_alerts %}
+                                <div class="alert alert-item severity-{{ alert.severity }} alert-{{ 'info' if alert.severity == 'info' else 'warning' if alert.severity == 'warning' else 'danger' }}">
+                                    <div class="d-flex justify-content-between">
+                                        <div>
+                                            <strong>{{ alert.node_id }}</strong> - {{ alert.location }}
+                                            <br>
+                                            <small>
+                                                {{ alert.detected_faces|length }} rosto(s) detectado(s)
+                                                {% if alert.detected_faces %}
+                                                    {% for face in alert.detected_faces %}
+                                                        {% if face.nome != 'Desconhecido' %}
+                                                            <span class="badge bg-success">{{ face.nome }}</span>
+                                                        {% endif %}
+                                                    {% endfor %}
+                                                {% endif %}
+                                            </small>
+                                        </div>
+                                        <small class="text-muted">
+                                            {{ alert.timestamp[:19] }}
+                                        </small>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            {% else %}
+                                <div class="alert alert-info">
+                                    <i class="bi bi-info-circle"></i>
+                                    Nenhum alerta ainda.
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Links Rápidos -->
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">⚡ Ações Rápidas</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-2">
+                                <a href="/web" class="btn btn-secondary w-100 mb-2">
+                                    <i class="bi bi-house"></i> Sistema Web
+                                </a>
+                            </div>
+                            <div class="col-md-2">
+                                <a href="/web/cadastro" class="btn btn-primary w-100 mb-2">
+                                    <i class="bi bi-person-plus"></i> Cadastrar Pessoa
+                                </a>
+                            </div>
+                            <div class="col-md-2">
+                                <a href="/web/reconhecimento" class="btn btn-success w-100 mb-2">
+                                    <i class="bi bi-eye"></i> Reconhecimento
+                                </a>
+                            </div>
+                            <div class="col-md-2">
+                                <a href="/nodes" class="btn btn-info w-100 mb-2">
+                                    <i class="bi bi-diagram-3"></i> Gerenciar Nós
+                                </a>
+                            </div>
+                            <div class="col-md-2">
+                                <a href="/alerts" class="btn btn-warning w-100 mb-2">
+                                    <i class="bi bi-bell"></i> Ver Alertas
+                                </a>
+                            </div>
+                            <div class="col-md-2">
+                                <a href="/api/nodes" class="btn btn-outline-secondary w-100 mb-2" target="_blank">
+                                    <i class="bi bi-code"></i> API
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
+    <script>
+        // Conectar ao WebSocket
+        const socket = io();
+        
+        socket.on('connect', () => {
+            console.log('✅ Conectado ao servidor');
+            document.getElementById('statusConnection').innerHTML = '🟢 Conectado';
+            document.getElementById('statusConnection').className = 'badge bg-success text-white me-2';
+            
+            // Entrar na sala do dashboard
+            socket.emit('join_dashboard');
+        });
+        
+        socket.on('disconnect', () => {
+            console.log('❌ Desconectado do servidor');
+            document.getElementById('statusConnection').innerHTML = '🔴 Desconectado';
+            document.getElementById('statusConnection').className = 'badge bg-danger text-white me-2';
+        });
+        
+        // Receber atualizações do dashboard
+        socket.on('dashboard_joined', (data) => {
+            console.log('📊 Dados do dashboard recebidos:', data);
+            atualizarEstatisticas(data.stats);
+        });
+        
+        // Nova detecção
+        socket.on('new_detection', (data) => {
+            console.log('🚨 Nova detecção:', data);
+            
+            // Atualizar estatísticas
+            atualizarEstatisticas(data.stats);
+            
+            // Adicionar alerta
+            adicionarAlerta(data.alert);
+            
+            // Atualizar status do nó
+            atualizarStatusNo(data.node);
+            
+            // Mostrar notificação
+            mostrarNotificacao(data.alert);
+        });
+        
+        // Nó registrado
+        socket.on('node_registered', (data) => {
+            console.log('📡 Novo nó registrado:', data.node);
+            adicionarNo(data.node);
+        });
+        
+        // Status do nó mudou
+        socket.on('node_status_changed', (data) => {
+            console.log('🔄 Status do nó mudou:', data);
+            atualizarStatusNo(data);
+        });
+        
+        // Atualização do sistema
+        socket.on('system_update', (data) => {
+            console.log('🔔 Atualização do sistema:', data);
+            if (data.type === 'new_face_registered') {
+                // Atualizar contador de pessoas cadastradas
+                const element = document.getElementById('statKnownFaces');
+                element.textContent = parseInt(element.textContent) + 1;
+            }
+        });
+        
+        function atualizarEstatisticas(stats) {
+            document.getElementById('statActiveNodes').textContent = stats.active_nodes || 0;
+            document.getElementById('statKnownFaces').textContent = stats.known_faces || 0;
+            document.getElementById('statTotalDetections').textContent = stats.total_detections || 0;
+        }
+        
+        function adicionarAlerta(alert) {
+            const container = document.getElementById('alertsContainer');
+            const alertElement = criarElementoAlerta(alert);
+            
+            // Adicionar no início
+            container.insertBefore(alertElement, container.firstChild);
+            
+            // Manter apenas os 10 mais recentes visualmente
+            const alertas = container.children;
+            if (alertas.length > 10) {
+                container.removeChild(alertas[alertas.length - 1]);
+            }
+            
+            // Atualizar contador
+            document.getElementById('statRecentAlerts').textContent = alertas.length;
+        }
+        
+        function criarElementoAlerta(alert) {
+            const div = document.createElement('div');
+            div.className = `alert alert-item severity-${alert.severity} alert-${getSeverityClass(alert.severity)}`;
+            
+            const facesDetectadas = alert.detected_faces || [];
+            const pessoasConhecidas = facesDetectadas.filter(f => f.nome !== 'Desconhecido');
+            
+            div.innerHTML = `
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <strong>${alert.node_id}</strong> - ${alert.location}
+                        <br>
+                        <small>
+                            ${facesDetectadas.length} rosto(s) detectado(s)
+                            ${pessoasConhecidas.map(f => `<span class="badge bg-success">${f.nome}</span>`).join(' ')}
+                        </small>
+                    </div>
+                    <small class="text-muted">
+                        ${new Date(alert.timestamp).toLocaleString()}
+                    </small>
+                </div>
+            `;
+            
+            return div;
+        }
+        
+        function getSeverityClass(severity) {
+            switch(severity) {
+                case 'info': return 'info';
+                case 'warning': return 'warning';
+                case 'danger': return 'danger';
+                default: return 'info';
+            }
+        }
+        
+        function atualizarStatusNo(nodeData) {
+            const nodeElement = document.querySelector(`[data-node-id="${nodeData.node_id || nodeData.id}"]`);
+            if (nodeElement) {
+                const isOnline = nodeData.status === 'online';
+                
+                nodeElement.className = `card node-card mb-2 ${isOnline ? 'online' : 'offline'}`;
+                
+                const badge = nodeElement.querySelector('.badge');
+                if (badge) {
+                    badge.className = `badge bg-${isOnline ? 'success' : 'secondary'}`;
+                    badge.textContent = isOnline ? '🟢 Online' : '🔴 Offline';
+                }
+            }
+        }
+        
+        function adicionarNo(node) {
+            const container = document.getElementById('nodesContainer');
+            
+            // Remover mensagem de "nenhum nó" se existir
+            const infoAlert = container.querySelector('.alert-info');
+            if (infoAlert) {
+                infoAlert.remove();
+            }
+            
+            const nodeElement = document.createElement('div');
+            nodeElement.className = `card node-card mb-2 ${node.status === 'online' ? 'online' : 'offline'}`;
+            nodeElement.setAttribute('data-node-id', node.id);
+            
+            nodeElement.innerHTML = `
+                <div class="card-body py-2">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <strong>${node.id}</strong>
+                            <br>
+                            <small class="text-muted">📍 ${node.location}</small>
+                        </div>
+                        <div class="text-end">
+                            <span class="badge bg-${node.status === 'online' ? 'success' : 'secondary'}">
+                                ${node.status === 'online' ? '🟢 Online' : '🔴 Offline'}
+                            </span>
+                            <br>
+                            <small class="text-muted">
+                                ${node.stats?.total_detections || 0} detecções
+                            </small>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            container.appendChild(nodeElement);
+        }
+        
+        function mostrarNotificacao(alert) {
+            // Criar notificação toast
+            const toast = document.createElement('div');
+            toast.className = 'toast';
+            toast.style.position = 'fixed';
+            toast.style.top = '20px';
+            toast.style.right = '20px';
+            toast.style.zIndex = '9999';
+            
+            const facesDetectadas = alert.detected_faces || [];
+            const pessoasConhecidas = facesDetectadas.filter(f => f.nome !== 'Desconhecido');
+            
+            toast.innerHTML = `
+                <div class="toast-header">
+                    <strong class="me-auto">🚨 Nova Detecção</strong>
+                    <small>${alert.node_id}</small>
+                    <button type="button" class="btn-close" data-bs-dismiss="toast"></button>
+                </div>
+                <div class="toast-body">
+                    ${facesDetectadas.length} rosto(s) em ${alert.location}
+                    ${pessoasConhecidas.length > 0 ? '<br>Pessoas: ' + pessoasConhecidas.map(f => f.nome).join(', ') : ''}
+                </div>
+            `;
+            
+            document.body.appendChild(toast);
+            
+            const bsToast = new bootstrap.Toast(toast);
+            bsToast.show();
+            
+            // Remover após esconder
+            toast.addEventListener('hidden.bs.toast', () => {
+                document.body.removeChild(toast);
+            });
+        }
+    </script>
+</body>
+</html>
