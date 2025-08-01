@@ -19,6 +19,11 @@
             border-left-color: #dc3545;
             opacity: 0.8;
         }
+        .node-card.restarting {
+            border-left: 4px solid #ffc107;
+            background: linear-gradient(45deg, #fff3cd 0%, #ffffff 100%);
+        }
+        
         .status-badge {
             font-size: 0.75rem;
         }
@@ -29,6 +34,11 @@
         .action-btn {
             padding: 0.25rem 0.5rem;
             font-size: 0.75rem;
+        }
+        
+        @keyframes pulse {
+            from { opacity: 0.7; }
+            to { opacity: 1; }
         }
     </style>
 </head>
@@ -333,29 +343,106 @@
         </div>
     </div>
 
+    <!-- Modal Visualizar Câmera -->
+    <div class="modal fade" id="modalVisualizarCamera" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">📹 Visualizar Câmera</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="cameraContainer" class="text-center">
+                        <div id="cameraLoading" class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Carregando...</span>
+                        </div>
+                        <div id="cameraError" class="alert alert-danger" style="display: none;"></div>
+                        <div id="cameraStream" style="display: none;">
+                            <img id="cameraImage" class="img-fluid rounded" style="max-height: 400px;">
+                            <div class="mt-2">
+                                <small class="text-muted">Stream ao vivo da câmera IP</small>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="row mt-3">
+                        <div class="col-md-6">
+                            <h6>Informações da Câmera</h6>
+                            <p><strong>Nó:</strong> <span id="cameraNodeId">-</span></p>
+                            <p><strong>Localização:</strong> <span id="cameraLocation">-</span></p>
+                            <p><strong>URL:</strong> <span id="cameraUrl">-</span></p>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>Status da Conexão</h6>
+                            <p><strong>Status:</strong> <span id="cameraStatus" class="badge">-</span></p>
+                            <p><strong>Última atualização:</strong> <span id="cameraLastUpdate">-</span></p>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+                    <button type="button" class="btn btn-primary" onclick="atualizarStream()">
+                        <i class="bi bi-arrow-clockwise"></i> Atualizar
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
     <script>
-        // Conectar ao WebSocket
-        const socket = io();
+        // Conectar ao WebSocket com configurações melhoradas
+        const socket = io({
+            transports: ['websocket', 'polling'],
+            timeout: 20000,
+            forceNew: false,
+            reconnection: true,
+            reconnectionDelay: 1000,
+            reconnectionAttempts: 5,
+            maxReconnectionAttempts: 10
+        });
+        
+        let keepAliveInterval;
         
         socket.on('connect', () => {
             console.log('✅ Conectado ao servidor');
             document.getElementById('statusConnection').innerHTML = '🟢 Conectado';
             document.getElementById('statusConnection').className = 'badge bg-success text-white me-2';
+            
+            // Iniciar keep-alive
+            if (keepAliveInterval) clearInterval(keepAliveInterval);
+            keepAliveInterval = setInterval(() => {
+                socket.emit('ping');
+            }, 25000); // Ping a cada 25 segundos
         });
-        
-        socket.on('disconnect', () => {
-            console.log('❌ Desconectado do servidor');
+
+        socket.on('disconnect', (reason) => {
+            console.log('❌ Desconectado do servidor:', reason);
             document.getElementById('statusConnection').innerHTML = '🔴 Desconectado';
             document.getElementById('statusConnection').className = 'badge bg-danger text-white me-2';
+            
+            // Limpar keep-alive
+            if (keepAliveInterval) {
+                clearInterval(keepAliveInterval);
+                keepAliveInterval = null;
+            }
         });
         
-        // Nó registrado
-        socket.on('node_registered', (data) => {
-            console.log('📡 Novo nó registrado:', data.node);
-            adicionarNoNaLista(data.node);
-            atualizarContadores();
+        socket.on('pong', (data) => {
+            console.log('🏓 Pong recebido:', data.timestamp);
+        });
+
+        socket.on('connect_error', (error) => {
+            console.error('❌ Erro de conexão:', error);
+        });
+
+        socket.on('reconnect', (attemptNumber) => {
+            console.log('🔄 Reconectado após', attemptNumber, 'tentativas');
+        });
+
+        socket.on('reconnect_error', (error) => {
+            console.error('❌ Erro na reconexão:', error);
         });
         
         // Status do nó mudou
@@ -364,7 +451,175 @@
             atualizarStatusNoNaLista(data);
             atualizarContadores();
         });
-
+        
+        // MELHORAR FUNÇÃO DE ATUALIZAR STATUS
+        function atualizarStatusNoNaLista(data) {
+            const nodeCard = document.querySelector(`[data-node-id="${data.node_id}"]`);
+            if (!nodeCard) return;
+            
+            // Atualizar classes CSS
+            nodeCard.classList.remove('online', 'offline', 'restarting');
+            nodeCard.classList.add(data.status);
+            
+            // Atualizar badge de status
+            const statusBadge = nodeCard.querySelector('.status-badge');
+            if (statusBadge) {
+                let statusText, statusClass;
+                
+                switch(data.status) {
+                    case 'online':
+                        statusText = '🟢 Online';
+                        statusClass = 'badge bg-success status-badge';
+                        break;
+                    case 'restarting':
+                        statusText = '🔄 Reiniciando';
+                        statusClass = 'badge bg-warning status-badge';
+                        break;
+                    default:
+                        statusText = '🔴 Offline';
+                        statusClass = 'badge bg-secondary status-badge';
+                }
+                
+                statusBadge.textContent = statusText;
+                statusBadge.className = statusClass;
+            }
+            
+            // Atualizar ícone da câmera
+            const cameraIcon = nodeCard.querySelector('.bi-camera-video');
+            if (cameraIcon) {
+                const iconClass = data.status === 'online' ? 'success' : 
+                                data.status === 'restarting' ? 'warning' : 'secondary';
+                cameraIcon.className = `bi bi-camera-video fs-2 text-${iconClass}`;
+            }
+            
+            // Atualizar última atividade
+            const lastSeenElement = nodeCard.querySelector('.stats-mini');
+            if (lastSeenElement && data.node) {
+                lastSeenElement.innerHTML = `Última atividade:<br>${new Date(data.node.last_seen).toLocaleString()}`;
+            }
+        }
+        
+        // CORRIGIR FUNÇÃO DE REINICIAR
+        async function reiniciarNo(nodeId) {
+            if (!confirm(`Deseja reiniciar o nó ${nodeId}?`)) {
+                return;
+            }
+            
+            try {
+                // Mostrar status de reiniciando imediatamente
+                atualizarStatusNoNaLista({
+                    node_id: nodeId,
+                    status: 'restarting'
+                });
+                
+                const response = await fetch(`/api/nodes/${nodeId}/restart`, {
+                    method: 'POST'
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    mostrarSucesso('Comando de reinicialização enviado!');
+                } else {
+                    mostrarErro('Erro: ' + data.erro);
+                    
+                    // Reverter status em caso de erro
+                    atualizarStatusNoNaLista({
+                        node_id: nodeId,
+                        status: 'offline'
+                    });
+                }
+                
+            } catch (err) {
+                mostrarErro('Erro de conexão: ' + err.message);
+            }
+        }
+        
+        // ADICIONAR FUNÇÃO PARA ALTERNAR STATUS MANUALMENTE
+        async function alternarStatusNo(nodeId) {
+            try {
+                const response = await fetch(`/api/nodes/${nodeId}/toggle_status`, {
+                    method: 'POST'
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    mostrarSucesso(`Status alterado para ${data.node.status}`);
+                } else {
+                    mostrarErro('Erro: ' + data.erro);
+                }
+                
+            } catch (err) {
+                mostrarErro('Erro de conexão: ' + err.message);
+            }
+        }
+        
+        // MELHORAR FUNÇÃO DE CARREGAR STREAM
+        async function carregarStreamCamera(nodeId) {
+            const loading = document.getElementById('cameraLoading');
+            const error = document.getElementById('cameraError');
+            const stream = document.getElementById('cameraStream');
+            const image = document.getElementById('cameraImage');
+            const status = document.getElementById('cameraStatus');
+            const lastUpdate = document.getElementById('cameraLastUpdate');
+            
+            // Reset UI
+            loading.style.display = 'block';
+            error.style.display = 'none';
+            stream.style.display = 'none';
+            
+            try {
+                const response = await fetch(`/api/nodes/${nodeId}/stream`);
+                const data = await response.json();
+                
+                if (response.ok && data.proxy_url) {
+                    // Usar proxy URL para evitar CORS
+                    const imageUrl = data.proxy_url + '?' + new Date().getTime();
+                    image.src = imageUrl;
+                    
+                    // Configurar timeouts
+                    let loadTimeout = setTimeout(() => {
+                        mostrarErroCamera('Timeout ao carregar stream');
+                    }, 15000);
+                    
+                    image.onload = () => {
+                        clearTimeout(loadTimeout);
+                        loading.style.display = 'none';
+                        stream.style.display = 'block';
+                        status.textContent = 'Online';
+                        status.className = 'badge bg-success';
+                        lastUpdate.textContent = new Date().toLocaleString();
+                        
+                        // ATUALIZAR STATUS DO NÓ NA LISTA
+                        atualizarStatusNoNaLista({
+                            node_id: nodeId,
+                            status: 'online',
+                            node: { last_seen: new Date().toISOString() }
+                        });
+                    };
+                    
+                    image.onerror = () => {
+                        clearTimeout(loadTimeout);
+                        mostrarErroCamera('Erro ao carregar stream da câmera');
+                    };
+                    
+                } else {
+                    mostrarErroCamera(data.erro || 'Stream não disponível');
+                }
+                
+            } catch (err) {
+                mostrarErroCamera('Erro de conexão: ' + err.message);
+            }
+        }
+        
+        // Cleanup ao sair da página
+        window.addEventListener('beforeunload', () => {
+            if (keepAliveInterval) {
+                clearInterval(keepAliveInterval);
+            }
+        });
+        
         // Inicializar tooltips
         var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
         var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
@@ -427,142 +682,338 @@
 
         function verDetalhes(nodeId) {
             console.log('Ver detalhes do nó:', nodeId);
-            alert(`Detalhes do nó ${nodeId}\n\nEsta funcionalidade será implementada em breve.`);
+            
+            // Buscar dados do nó
+            const nodeCard = document.querySelector(`[data-node-id="${nodeId}"]`);
+            if (!nodeCard) return;
+            
+            // Mostrar modal da câmera
+            mostrarModalCamera(nodeId);
         }
-
-        function reiniciarNo(nodeId) {
-            if (confirm(`Deseja reiniciar o nó ${nodeId}?`)) {
-                console.log('Reiniciando nó:', nodeId);
-                alert('Comando de reinicialização enviado!');
+        
+        async function carregarStreamCamera(nodeId) {
+            const loading = document.getElementById('cameraLoading');
+            const error = document.getElementById('cameraError');
+            const stream = document.getElementById('cameraStream');
+            const image = document.getElementById('cameraImage');
+            const status = document.getElementById('cameraStatus');
+            const lastUpdate = document.getElementById('cameraLastUpdate');
+            
+            // Reset UI
+            loading.style.display = 'block';
+            error.style.display = 'none';
+            stream.style.display = 'none';
+            
+            try {
+                const response = await fetch(`/api/nodes/${nodeId}/stream`);
+                const data = await response.json();
+                
+                if (response.ok && data.proxy_url) {
+                    // Usar proxy URL para evitar CORS
+                    image.src = data.proxy_url + '?' + new Date().getTime(); // Cache busting
+                    
+                    // Configurar timeouts
+                    let loadTimeout = setTimeout(() => {
+                        mostrarErroCamera('Timeout ao carregar stream');
+                    }, 10000);
+                    
+                    image.onload = () => {
+                        clearTimeout(loadTimeout);
+                        loading.style.display = 'none';
+                        stream.style.display = 'block';
+                        status.textContent = 'Online';
+                        status.className = 'badge bg-success';
+                        lastUpdate.textContent = new Date().toLocaleString();
+                    };
+                    
+                    image.onerror = () => {
+                        clearTimeout(loadTimeout);
+                        mostrarErroCamera('Erro ao carregar stream da câmera');
+                    };
+                    
+                } else {
+                    mostrarErroCamera(data.erro || 'Stream não disponível');
+                }
+                
+            } catch (err) {
+                mostrarErroCamera('Erro de conexão: ' + err.message);
             }
         }
-
-        function removerNo(nodeId) {
-            if (confirm(`Deseja remover permanentemente o nó ${nodeId}?`)) {
-                console.log('Removendo nó:', nodeId);
-                document.querySelector(`[data-node-id="${nodeId}"]`).remove();
-                atualizarContadores();
-                alert('Nó removido com sucesso!');
+        
+        function encontrarNodePorId(nodeId) {
+            // Buscar dados reais do nó via API
+            return fetch(`/api/nodes`)
+                .then(response => response.json())
+                .then(data => {
+                    const node = data.nodes[nodeId];
+                    return node || null;
+                })
+                .catch(() => {
+                    // Fallback - buscar do DOM
+                    const nodeCard = document.querySelector(`[data-node-id="${nodeId}"]`);
+                    if (!nodeCard) return null;
+                    
+                    const locationElement = nodeCard.querySelector('p.text-muted');
+                    const location = locationElement ? locationElement.textContent.replace('📍', '').trim() : '';
+                    
+                    return {
+                        id: nodeId,
+                        location: location,
+                        url: '', // Será preenchido pela API
+                        status: nodeCard.classList.contains('online') ? 'online' : 'offline'
+                    };
+                });
+        }
+        
+        async function mostrarModalCamera(nodeId) {
+            try {
+                const node = await encontrarNodePorId(nodeId);
+                if (!node) {
+                    alert('Nó não encontrado');
+                    return;
+                }
+                
+                // Preencher informações
+                document.getElementById('cameraNodeId').textContent = nodeId;
+                document.getElementById('cameraLocation').textContent = node.location || 'Não informado';
+                document.getElementById('cameraUrl').textContent = node.url || 'Aguardando...';
+                
+                // Mostrar modal
+                const modal = new bootstrap.Modal(document.getElementById('modalVisualizarCamera'));
+                modal.show();
+                
+                // Carregar stream
+                await carregarStreamCamera(nodeId);
+                
+            } catch (err) {
+                alert('Erro ao carregar dados do nó: ' + err.message);
+            }
+        }
+        
+        // Melhorar função de adicionar nó
+        async function adicionarNo() {
+            const form = document.getElementById('formAdicionarNo');
+            const formData = new FormData(form);
+            
+            const nodeData = {
+                node_id: document.getElementById('nodeId').value,
+                location: document.getElementById('nodeLocation').value,
+                type: document.getElementById('nodeType').value,
+                url: document.getElementById('nodeUrl').value || null
+            };
+            
+            // Validar dados
+            if (!nodeData.node_id || !nodeData.location) {
+                alert('Preencha todos os campos obrigatórios!');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/nodes', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(nodeData)
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    // Fechar modal
+                    bootstrap.Modal.getInstance(document.getElementById('modalAdicionarNo')).hide();
+                    
+                    // Limpar formulário
+                    form.reset();
+                    
+                    // Adicionar nó na lista
+                    adicionarNoNaLista(data.node);
+                    atualizarContadores();
+                    
+                    alert('Nó adicionado com sucesso!');
+                } else {
+                    alert('Erro: ' + data.erro);
+                }
+                
+            } catch (err) {
+                alert('Erro de conexão: ' + err.message);
+            }
+        }
+        
+        // Melhorar função de remoção
+        async function removerNo(nodeId) {
+            if (!confirm(`Deseja remover permanentemente o nó ${nodeId}?`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/nodes/${nodeId}`, {
+                    method: 'DELETE'
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    document.querySelector(`[data-node-id="${nodeId}"]`).remove();
+                    atualizarContadores();
+                    alert('Nó removido com sucesso!');
+                } else {
+                    alert('Erro: ' + data.erro);
+                }
+                
+            } catch (err) {
+                alert('Erro de conexão: ' + err.message);
+            }
+        }
+        
+        // Função para reiniciar nó
+        async function reiniciarNo(nodeId) {
+            if (!confirm(`Deseja reiniciar o nó ${nodeId}?`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/nodes/${nodeId}/restart`, {
+                    method: 'POST'
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    alert('Comando de reinicialização enviado!');
+                } else {
+                    alert('Erro: ' + data.erro);
+                }
+                
+            } catch (err) {
+                alert('Erro de conexão: ' + err.message);
             }
         }
 
         function adicionarNoNaLista(node) {
             const container = document.getElementById('nodesContainer');
+            if (!container) return;
             
-            // Criar elemento do nó
-            const nodeElement = criarElementoNo(node);
-            container.appendChild(nodeElement);
-        }
-
-        function criarElementoNo(node) {
-            const div = document.createElement('div');
-            div.className = `card node-card mb-3 ${node.status === 'online' ? 'online' : 'offline'}`;
-            div.setAttribute('data-node-id', node.id);
-            
-            div.innerHTML = `
-                <div class="card-body">
-                    <div class="row align-items-center">
-                        <div class="col-md-4">
-                            <div class="d-flex align-items-center">
-                                <div class="me-3">
-                                    <i class="bi bi-camera-video fs-2 text-${node.status === 'online' ? 'success' : 'secondary'}"></i>
-                                </div>
-                                <div>
-                                    <h6 class="mb-1">${node.id}</h6>
-                                    <p class="mb-0 text-muted">
-                                        <i class="bi bi-geo-alt"></i> ${node.location}
-                                    </p>
-                                    <small class="text-muted">${node.type}</small>
+            const nodeHtml = `
+                <div class="card node-card mb-3 ${node.status === 'online' ? 'online' : 'offline'}" 
+                     data-node-id="${node.id}">
+                    <div class="card-body">
+                        <div class="row align-items-center">
+                            <div class="col-md-4">
+                                <div class="d-flex align-items-center">
+                                    <div class="me-3">
+                                        <i class="bi bi-camera-video fs-2 text-${node.status === 'online' ? 'success' : 'secondary'}"></i>
+                                    </div>
+                                    <div>
+                                        <h6 class="mb-1">${node.id}</h6>
+                                        <p class="mb-0 text-muted">
+                                            <i class="bi bi-geo-alt"></i> ${node.location}
+                                        </p>
+                                        <small class="text-muted">${node.type || 'camera'}</small>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                        <div class="col-md-2 text-center">
-                            <span class="badge bg-${node.status === 'online' ? 'success' : 'secondary'} status-badge">
-                                ${node.status === 'online' ? '🟢 Online' : '🔴 Offline'}
-                            </span>
-                            <br>
-                            <small class="stats-mini">
-                                Última atividade:<br>
-                                ${new Date(node.last_seen).toLocaleString()}
-                            </small>
-                        </div>
-                        <div class="col-md-3">
-                            <div class="row text-center">
-                                <div class="col-6">
-                                    <strong>${node.stats?.total_detections || 0}</strong>
-                                    <br>
-                                    <small class="stats-mini">Total</small>
-                                </div>
-                                <div class="col-6">
-                                    <strong>${node.stats?.detections_today || 0}</strong>
-                                    <br>
-                                    <small class="stats-mini">Hoje</small>
+                            <div class="col-md-2 text-center">
+                                <span class="badge bg-${node.status === 'online' ? 'success' : 'secondary'} status-badge">
+                                    ${node.status === 'online' ? '🟢 Online' : '🔴 Offline'}
+                                </span>
+                                <br>
+                                <small class="stats-mini">
+                                    Última atividade:<br>
+                                    ${node.last_seen ? new Date(node.last_seen).toLocaleString() : 'N/A'}
+                                </small>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="row text-center">
+                                    <div class="col-6">
+                                        <strong>${node.stats?.total_detections || 0}</strong>
+                                        <br>
+                                        <small class="stats-mini">Total</small>
+                                    </div>
+                                    <div class="col-6">
+                                        <strong>${node.stats?.detections_today || 0}</strong>
+                                        <br>
+                                        <small class="stats-mini">Hoje</small>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                        <div class="col-md-3 text-end">
-                            <div class="btn-group" role="group">
-                                <button class="btn btn-outline-primary action-btn" 
-                                        onclick="editarNo('${node.id}')"
-                                        data-bs-toggle="tooltip" title="Editar">
-                                    <i class="bi bi-pencil"></i>
-                                </button>
-                                <button class="btn btn-outline-info action-btn"
-                                        onclick="verDetalhes('${node.id}')"
-                                        data-bs-toggle="tooltip" title="Detalhes">
-                                    <i class="bi bi-info-circle"></i>
-                                </button>
-                                <button class="btn btn-outline-warning action-btn"
-                                        onclick="reiniciarNo('${node.id}')"
-                                        data-bs-toggle="tooltip" title="Reiniciar">
-                                    <i class="bi bi-arrow-clockwise"></i>
-                                </button>
-                                <button class="btn btn-outline-danger action-btn"
-                                        onclick="removerNo('${node.id}')"
-                                        data-bs-toggle="tooltip" title="Remover">
-                                    <i class="bi bi-trash"></i>
-                                </button>
+                            <div class="col-md-3 text-end">
+                                <div class="btn-group" role="group">
+                                    <button class="btn btn-outline-primary action-btn" 
+                                            onclick="editarNo('${node.id}')"
+                                            data-bs-toggle="tooltip" title="Editar">
+                                        <i class="bi bi-pencil"></i>
+                                    </button>
+                                    <button class="btn btn-outline-info action-btn"
+                                            onclick="verDetalhes('${node.id}')"
+                                            data-bs-toggle="tooltip" title="Ver Câmera">
+                                        <i class="bi bi-camera-video"></i>
+                                    </button>
+                                    <button class="btn btn-outline-warning action-btn"
+                                            onclick="reiniciarNo('${node.id}')"
+                                            data-bs-toggle="tooltip" title="Reiniciar">
+                                        <i class="bi bi-arrow-clockwise"></i>
+                                    </button>
+                                    <button class="btn btn-outline-danger action-btn"
+                                            onclick="removerNo('${node.id}')"
+                                            data-bs-toggle="tooltip" title="Remover">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
             `;
             
-            return div;
+            container.insertAdjacentHTML('beforeend', nodeHtml);
         }
-
-        function atualizarStatusNoNaLista(data) {
-            const nodeElement = document.querySelector(`[data-node-id="${data.node_id}"]`);
-            if (nodeElement) {
-                const isOnline = data.status === 'online';
-                
-                nodeElement.className = `card node-card mb-3 ${isOnline ? 'online' : 'offline'}`;
-                
-                const badge = nodeElement.querySelector('.badge');
-                if (badge) {
-                    badge.className = `badge bg-${isOnline ? 'success' : 'secondary'} status-badge`;
-                    badge.textContent = isOnline ? '🟢 Online' : '🔴 Offline';
-                }
-                
-                const icon = nodeElement.querySelector('.bi-camera-video');
-                if (icon) {
-                    icon.className = `bi bi-camera-video fs-2 text-${isOnline ? 'success' : 'secondary'}`;
-                }
-            }
-        }
-
+        
         function atualizarContadores() {
-            const nodeCards = document.querySelectorAll('.node-card');
-            let online = 0, offline = 0;
+            const nodes = document.querySelectorAll('.node-card');
+            const online = document.querySelectorAll('.node-card.online').length;
+            const offline = nodes.length - online;
             
-            nodeCards.forEach(card => {
-                if (card.classList.contains('online')) online++;
-                else offline++;
-            });
-            
+            document.getElementById('totalNodes').textContent = nodes.length;
             document.getElementById('totalOnline').textContent = online;
             document.getElementById('totalOffline').textContent = offline;
-            document.getElementById('totalNodes').textContent = online + offline;
+        }
+        
+        // Melhorar feedback visual
+        function mostrarSucesso(mensagem) {
+            const alert = document.createElement('div');
+            alert.className = 'alert alert-success alert-dismissible fade show position-fixed';
+            alert.style.top = '20px';
+            alert.style.right = '20px';
+            alert.style.zIndex = '9999';
+            alert.innerHTML = `
+                ${mensagem}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+            document.body.appendChild(alert);
+            
+            setTimeout(() => {
+                if (alert.parentNode) {
+                    alert.parentNode.removeChild(alert);
+                }
+            }, 5000);
+        }
+        
+        function mostrarErro(mensagem) {
+            const alert = document.createElement('div');
+            alert.className = 'alert alert-danger alert-dismissible fade show position-fixed';
+            alert.style.top = '20px';
+            alert.style.right = '20px';
+            alert.style.zIndex = '9999';
+            alert.innerHTML = `
+                ${mensagem}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+            document.body.appendChild(alert);
+            
+            setTimeout(() => {
+                if (alert.parentNode) {
+                    alert.parentNode.removeChild(alert);
+                }
+            }, 5000);
         }
     </script>
 </body>

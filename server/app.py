@@ -15,9 +15,17 @@ from datetime import datetime
 import threading
 
 app = Flask(__name__)
+# Configurações melhoradas para o SocketIO
 app.config['SECRET_KEY'] = 'facial-security-2024'
 app.config['UPLOAD_FOLDER'] = 'uploads'
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, 
+                   cors_allowed_origins="*",
+                   async_mode='threading',
+                   ping_timeout=120,      # Aumentar timeout para 2 minutos
+                   ping_interval=30,      # Ping a cada 30 segundos
+                   logger=False,
+                   engineio_logger=False,
+                   transports=['websocket', 'polling'])  # Adicionar transports
 
 # Configurações
 ARQUIVO_ENCODINGS = 'data/encodings.pickle'
@@ -358,41 +366,329 @@ def detectar_rosto():
         print(f"Erro na detecção: {str(e)}")
         return jsonify({'erro': f'Erro interno: {str(e)}'}), 500
 
-# =================== APIs DO SISTEMA DISTRIBUÍDO ===================
+# =================== APIs DOS NÓS ===================
 
 @app.route('/api/nodes', methods=['GET'])
-def listar_nodes():
-    """Lista todos os nós registrados."""
-    return jsonify({'nodes': sistema['nodes']})
+def api_get_nodes():
+    """API para listar todos os nós."""
+    return jsonify({
+        'nodes': sistema['nodes'],
+        'total': len(sistema['nodes']),
+        'online': len([n for n in sistema['nodes'].values() if n.get('status') == 'online']),
+        'offline': len([n for n in sistema['nodes'].values() if n.get('status') == 'offline'])
+    })
 
-@app.route('/api/alerts', methods=['GET'])
-def listar_alerts():
-    """Lista alertas recentes."""
-    limit = request.args.get('limit', 50, type=int)
-    return jsonify({'alerts': sistema['alerts'][:limit]})
+@app.route('/api/nodes', methods=['POST'])
+def api_add_node():
+    """API para adicionar novo nó."""
+    data = request.get_json()
+    
+    node_id = data.get('node_id')
+    if not node_id:
+        return jsonify({'erro': 'ID do nó é obrigatório'}), 400
+    
+    if node_id in sistema['nodes']:
+        return jsonify({'erro': 'Nó já existe'}), 400
+    
+    # Criar novo nó
+    novo_no = {
+        'id': node_id,
+        'location': data.get('location', ''),
+        'type': data.get('type', 'camera'),
+        'url': data.get('url'),
+        'status': 'offline',
+        'last_seen': datetime.now().isoformat(),
+        'registered_at': datetime.now().isoformat(),
+        'stats': {
+            'total_detections': 0,
+            'last_detection': None
+        }
+    }
+    
+    sistema['nodes'][node_id] = novo_no
+    salvar_nodes()
+    
+    # Notificar dashboard
+    socketio.emit('node_registered', {'node': novo_no}, room='dashboard')
+    
+    return jsonify({'sucesso': 'Nó adicionado com sucesso', 'node': novo_no})
+
+@app.route('/api/nodes/<node_id>', methods=['PUT'])
+def api_update_node(node_id):
+    """API para atualizar configurações do nó."""
+    if node_id not in sistema['nodes']:
+        return jsonify({'erro': 'Nó não encontrado'}), 404
+    
+    data = request.get_json()
+    node = sistema['nodes'][node_id]
+    
+    # Atualizar campos permitidos
+    if 'location' in data:
+        node['location'] = data['location']
+    if 'url' in data:
+        node['url'] = data['url']
+    if 'type' in data:
+        node['type'] = data['type']
+    
+    node['updated_at'] = datetime.now().isoformat()
+    salvar_nodes()
+    
+    # Notificar dashboard
+    socketio.emit('node_updated', {'node': node}, room='dashboard')
+    
+    return jsonify({'sucesso': 'Nó atualizado com sucesso', 'node': node})
+
+@app.route('/api/nodes/<node_id>', methods=['DELETE'])
+def api_delete_node(node_id):
+    """API para remover nó."""
+    if node_id not in sistema['nodes']:
+        return jsonify({'erro': 'Nó não encontrado'}), 404
+    
+    del sistema['nodes'][node_id]
+    salvar_nodes()
+    
+    # Notificar dashboard
+    socketio.emit('node_removed', {'node_id': node_id}, room='dashboard')
+    
+    return jsonify({'sucesso': 'Nó removido com sucesso'})
+
+@app.route('/api/nodes/<node_id>/stream')
+def api_node_stream(node_id):
+    """API para obter stream da câmera do nó."""
+    if node_id not in sistema['nodes']:
+        return jsonify({'erro': 'Nó não encontrado'}), 404
+    
+    node = sistema['nodes'][node_id]
+    camera_url = node.get('url')
+    
+    if not camera_url:
+        return jsonify({'erro': 'URL da câmera não configurada'}), 400
+    
+    # Para IP Webcam, precisamos adicionar o endpoint correto
+    if 'video' not in camera_url and ':8080' in camera_url:
+        # IP Webcam Android - adicionar endpoint de video
+        if not camera_url.endswith('/'):
+            camera_url += '/'
+        camera_url += 'video'
+    
+    try:
+        # Testar conexão básica primeiro
+        import requests
+        test_response = requests.get(camera_url.replace('/video', '/'), timeout=3)
+        
+        # ATUALIZAR STATUS DO NÓ PARA ONLINE
+        node['status'] = 'online'
+        node['last_seen'] = datetime.now().isoformat()
+        salvar_nodes()
+        
+        # NOTIFICAR DASHBOARD SOBRE MUDANÇA DE STATUS
+        socketio.emit('node_status_changed', {
+            'node_id': node_id,
+            'status': 'online',
+            'node': node
+        }, room='dashboard')
+        
+        return jsonify({
+            'status': 'online',
+            'stream_url': camera_url,
+            'node_id': node_id,
+            'proxy_url': f'/api/nodes/{node_id}/proxy_stream'
+        })
+        
+    except Exception as e:
+        # MARCAR COMO OFFLINE SE FALHAR
+        node['status'] = 'offline'
+        salvar_nodes()
+        
+        socketio.emit('node_status_changed', {
+            'node_id': node_id,
+            'status': 'offline',
+            'node': node
+        }, room='dashboard')
+        
+        return jsonify({'erro': f'Câmera não acessível: {str(e)}'}), 503
+
+@app.route('/api/nodes/<node_id>/proxy_stream')
+def api_proxy_stream(node_id):
+    """Proxy para stream da câmera (evita CORS)."""
+    if node_id not in sistema['nodes']:
+        return "Nó não encontrado", 404
+    
+    node = sistema['nodes'][node_id]
+    camera_url = node.get('url')
+    
+    if not camera_url:
+        return "URL não configurada", 400
+    
+    # Ajustar URL para IP Webcam
+    if 'video' not in camera_url and ':8080' in camera_url:
+        if not camera_url.endswith('/'):
+            camera_url += '/'
+        camera_url += 'video'
+    
+    try:
+        import requests
+        from flask import Response
+        
+        # CONFIGURAÇÕES OTIMIZADAS PARA STREAM
+        resp = requests.get(
+            camera_url, 
+            stream=True, 
+            timeout=30,
+            headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Connection': 'keep-alive'
+            }
+        )
+        
+        def generate():
+            try:
+                for chunk in resp.iter_content(chunk_size=8192):  # Chunks maiores
+                    if chunk:
+                        yield chunk
+            except Exception as e:
+                print(f"Erro no stream: {e}")
+                yield b''  # Finalizar graciosamente
+        
+        return Response(
+            generate(),
+            content_type=resp.headers.get('content-type', 'multipart/x-mixed-replace'),
+            headers={
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache',
+                'Expires': '0'
+            }
+        )
+        
+    except Exception as e:
+        return f"Erro no stream: {str(e)}", 503
+
+@app.route('/api/nodes/<node_id>/restart', methods=['POST'])
+def api_restart_node(node_id):
+    """API para reiniciar nó."""
+    if node_id not in sistema['nodes']:
+        return jsonify({'erro': 'Nó não encontrado'}), 404
+    
+    try:
+        # Marcar nó como reiniciando
+        sistema['nodes'][node_id]['status'] = 'restarting'
+        sistema['nodes'][node_id]['last_seen'] = datetime.now().isoformat()
+        salvar_nodes()
+        
+        # Notificar sobre mudança de status
+        socketio.emit('node_status_changed', {
+            'node_id': node_id,
+            'status': 'restarting',
+            'node': sistema['nodes'][node_id]
+        }, room='dashboard')
+        
+        # Simular comando de reinicialização
+        socketio.emit('restart_command', {'node_id': node_id})
+        
+        # Após 5 segundos, marcar como offline (simulando reinício)
+        def marcar_offline():
+            time.sleep(5)
+            if node_id in sistema['nodes']:
+                sistema['nodes'][node_id]['status'] = 'offline'
+                salvar_nodes()
+                socketio.emit('node_status_changed', {
+                    'node_id': node_id,
+                    'status': 'offline',
+                    'node': sistema['nodes'][node_id]
+                }, room='dashboard')
+        
+        # Executar em thread separada
+        restart_thread = threading.Thread(target=marcar_offline, daemon=True)
+        restart_thread.start()
+        
+        return jsonify({'sucesso': f'Comando de reinicialização enviado para {node_id}'})
+        
+    except Exception as e:
+        return jsonify({'erro': f'Erro ao reiniciar nó: {str(e)}'}), 500
+
+@app.route('/api/nodes/<node_id>/toggle_status', methods=['POST'])
+def api_toggle_node_status(node_id):
+    """API para alternar status do nó manualmente."""
+    if node_id not in sistema['nodes']:
+        return jsonify({'erro': 'Nó não encontrado'}), 404
+    
+    node = sistema['nodes'][node_id]
+    current_status = node.get('status', 'offline')
+    
+    # Alternar status
+    new_status = 'offline' if current_status == 'online' else 'online'
+    node['status'] = new_status
+    node['last_seen'] = datetime.now().isoformat()
+    salvar_nodes()
+    
+    # Notificar mudança
+    socketio.emit('node_status_changed', {
+        'node_id': node_id,
+        'status': new_status,
+        'node': node
+    }, room='dashboard')
+    
+    return jsonify({
+        'sucesso': f'Status do nó alterado para {new_status}',
+        'node': node
+    })
 
 # =================== WEBSOCKET EVENTS ===================
 
 @socketio.on('connect')
 def handle_connect():
-    print(f'Cliente conectado: {request.sid}')
+    try:
+        print(f'✅ Cliente conectado: {request.sid}')
+        
+        # Enviar dados iniciais para diferentes tipos de clientes
+        emit('connection_confirmed', {
+            'status': 'connected',
+            'timestamp': datetime.now().isoformat(),
+            'server_time': time.time()
+        })
+        
+    except Exception as e:
+        print(f'❌ Erro na conexão: {e}')
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    print(f'Cliente desconectado: {request.sid}')
+    try:
+        print(f'❌ Cliente desconectado: {request.sid}')
+        
+        # Verificar se era um nó sensor
+        for node_id, node_data in sistema['nodes'].items():
+            if node_data.get('session_id') == request.sid:
+                node_data['status'] = 'offline'
+                node_data['last_seen'] = datetime.now().isoformat()
+                salvar_nodes()  # Salvar mudança
+                
+                # Notificar dashboard
+                socketio.emit('node_status_changed', {
+                    'node_id': node_id,
+                    'status': 'offline',
+                    'node': node_data
+                }, room='dashboard')
+                print(f'📡 Nó {node_id} marcado como offline')
+                break
+                
+    except Exception as e:
+        print(f'❌ Erro na desconexão: {e}')
+
+# Adicionar evento de ping personalizado
+@socketio.on('ping')
+def handle_ping():
+    """Responder ping dos clientes."""
+    emit('pong', {'timestamp': datetime.now().isoformat()})
+
+@socketio.on('keep_alive')
+def handle_keep_alive(data):
+    """Manter conexão ativa."""
+    node_id = data.get('node_id')
+    if node_id and node_id in sistema['nodes']:
+        sistema['nodes'][node_id]['last_seen'] = datetime.now().isoformat()
+        sistema['nodes'][node_id]['status'] = 'online'
     
-    # Verificar se era um nó sensor
-    for node_id, node_data in sistema['nodes'].items():
-        if node_data.get('session_id') == request.sid:
-            node_data['status'] = 'offline'
-            node_data['last_seen'] = datetime.now().isoformat()
-            
-            # Notificar dashboard
-            socketio.emit('node_status_changed', {
-                'node_id': node_id,
-                'status': 'offline'
-            }, room='dashboard')
-            break
+    emit('keep_alive_response', {'status': 'ok'})
 
 @socketio.on('register_node')
 def handle_node_registration(data):
@@ -463,7 +759,7 @@ def handle_detection_event(data):
     # Atualizar estatísticas globais
     sistema['stats']['total_detections'] += len(faces)
     
-    # Notificar dashboard em tempo real
+    # Notificar dashboard in tempo real
     socketio.emit('new_detection', {
         'alert': alert,
         'node': sistema['nodes'][node_id],
@@ -548,4 +844,11 @@ if __name__ == '__main__':
     print("🌐 Servidor Central iniciado em http://0.0.0.0:5000")
     print("📱 Sistema Web em http://0.0.0.0:5000/web")
     print("📊 Dashboard em http://0.0.0.0:5000/")
-    socketio.run(app, debug=True, host='0.0.0.0', port=5000)
+    
+    # CONFIGURAÇÕES OTIMIZADAS PARA O SERVIDOR
+    socketio.run(app, 
+                debug=False, 
+                host='0.0.0.0', 
+                port=5000,
+                use_reloader=False,  # Evitar recarregamento duplo
+                log_output=False)    # Reduzir logs verbosos
