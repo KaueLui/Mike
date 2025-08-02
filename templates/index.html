@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Reconhecimento Facial</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.0/socket.io.js"></script>
+</head>
+<body>
+    <h1>Sistema de Reconhecimento Facial</h1>
+    <video id="video" width="640" height="480" autoplay></video>
+    <canvas id="canvas" style="display: none;"></canvas>
+    <div id="results"></div>
+
+    <script>
+        // Configuração correta do Socket.IO
+        const socket = io({
+            transports: ['websocket', 'polling'],
+            upgrade: true,
+            rememberUpgrade: true
+        });
+
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const results = document.getElementById('results');
+
+        // Configurar câmera
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then(stream => {
+                video.srcObject = stream;
+            })
+            .catch(err => {
+                console.error('Erro ao acessar câmera:', err);
+            });
+
+        socket.on('connect', () => {
+            console.log('Conectado ao servidor');
+        });
+
+        socket.on('disconnect', () => {
+            console.log('Desconectado do servidor');
+        });
+
+        socket.on('recognition_result', (data) => {
+            results.innerHTML = `Pessoas detectadas: ${data.names.join(', ')}`;
+        });
+
+        socket.on('error', (data) => {
+            console.error('Erro:', data.message);
+        });
+
+        // Enviar frames para o servidor
+        setInterval(() => {
+            if (video.videoWidth > 0) {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                ctx.drawImage(video, 0, 0);
+                
+                const imageData = canvas.toDataURL('image/jpeg', 0.8);
+                socket.emit('video_frame', { image: imageData });
+            }
+        }, 1000); // Enviar a cada 1 segundo
+    </script>
+</body>
+</html>

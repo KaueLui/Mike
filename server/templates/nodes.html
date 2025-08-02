@@ -392,59 +392,70 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
     <script>
-        // Conectar ao WebSocket com configurações melhoradas
+        // SOLUÇÃO: Configuração WebSocket mais robusta
         const socket = io({
-            transports: ['websocket', 'polling'],
-            timeout: 20000,
+            transports: ['polling'],        // APENAS polling
+            upgrade: false,                 // Não tentar upgrade
+            timeout: 60000,                // 60 segundos
             forceNew: false,
             reconnection: true,
-            reconnectionDelay: 1000,
-            reconnectionAttempts: 5,
-            maxReconnectionAttempts: 10
+            reconnectionDelay: 2000,       // 2 segundos
+            reconnectionAttempts: 3,       // Menos tentativas
+            maxReconnectionAttempts: 5,
+            randomizationFactor: 0         // Sem randomização
         });
         
         let keepAliveInterval;
+        let connectionAttempts = 0;
+        const MAX_ATTEMPTS = 5;
         
         socket.on('connect', () => {
-            console.log('✅ Conectado ao servidor');
+            console.log('✅ Conectado ao servidor via polling');
+            connectionAttempts = 0;  // Reset contador
             document.getElementById('statusConnection').innerHTML = '🟢 Conectado';
             document.getElementById('statusConnection').className = 'badge bg-success text-white me-2';
             
-            // Iniciar keep-alive
+            // Keep-alive mais conservador
             if (keepAliveInterval) clearInterval(keepAliveInterval);
             keepAliveInterval = setInterval(() => {
-                socket.emit('ping');
-            }, 25000); // Ping a cada 25 segundos
+                if (socket.connected) {
+                    socket.emit('ping');
+                }
+            }, 30000); // 30 segundos
         });
 
         socket.on('disconnect', (reason) => {
-            console.log('❌ Desconectado do servidor:', reason);
+            console.log('❌ Desconectado:', reason);
             document.getElementById('statusConnection').innerHTML = '🔴 Desconectado';
             document.getElementById('statusConnection').className = 'badge bg-danger text-white me-2';
             
-            // Limpar keep-alive
             if (keepAliveInterval) {
                 clearInterval(keepAliveInterval);
                 keepAliveInterval = null;
             }
         });
-        
-        socket.on('pong', (data) => {
-            console.log('🏓 Pong recebido:', data.timestamp);
-        });
 
         socket.on('connect_error', (error) => {
-            console.error('❌ Erro de conexão:', error);
+            connectionAttempts++;
+            console.error(`❌ Erro conexão (${connectionAttempts}/${MAX_ATTEMPTS}):`, error.message);
+            
+            // Parar tentativas após limite
+            if (connectionAttempts >= MAX_ATTEMPTS) {
+                console.log('🛑 Máximo de tentativas atingido, parando reconexão');
+                socket.disconnect();
+                
+                // Mostrar mensagem para usuário
+                document.getElementById('statusConnection').innerHTML = '🔴 Conexão perdida';
+                document.getElementById('statusConnection').className = 'badge bg-danger text-white me-2';
+                
+                mostrarErro('Conexão perdida. Recarregue a página para tentar novamente.');
+            }
         });
 
-        socket.on('reconnect', (attemptNumber) => {
-            console.log('🔄 Reconectado após', attemptNumber, 'tentativas');
+        socket.on('pong', (data) => {
+            console.log('🏓 Pong:', new Date().toLocaleTimeString());
         });
 
-        socket.on('reconnect_error', (error) => {
-            console.error('❌ Erro na reconexão:', error);
-        });
-        
         // Status do nó mudou
         socket.on('node_status_changed', (data) => {
             console.log('🔄 Status do nó mudou:', data);
@@ -612,6 +623,40 @@
                 mostrarErroCamera('Erro de conexão: ' + err.message);
             }
         }
+        
+        function mostrarErroCamera(mensagem) {
+            const loading = document.getElementById('cameraLoading');
+            const error = document.getElementById('cameraError');
+            const stream = document.getElementById('cameraStream');
+            
+            loading.style.display = 'none';
+            stream.style.display = 'none';
+            error.style.display = 'block';
+            error.textContent = mensagem;
+            
+            const status = document.getElementById('cameraStatus');
+            const lastUpdate = document.getElementById('cameraLastUpdate');
+            if (status) {
+                status.textContent = 'Offline';
+                status.className = 'badge bg-danger';
+            }
+            if (lastUpdate) {
+                lastUpdate.textContent = new Date().toLocaleString();
+            }
+        }
+        
+        function atualizarStream() {
+            const nodeId = document.getElementById('cameraNodeId').textContent;
+            if (nodeId && nodeId !== '-') {
+                carregarStreamCamera(nodeId);
+            }
+        }
+        
+        // Remove aria-hidden from modal fade elements
+        const modalElements = document.querySelectorAll('.modal.fade');
+        modalElements.forEach(modal => {
+            modal.removeAttribute('aria-hidden');
+        });
         
         // Cleanup ao sair da página
         window.addEventListener('beforeunload', () => {
@@ -981,11 +1026,9 @@
         function mostrarSucesso(mensagem) {
             const alert = document.createElement('div');
             alert.className = 'alert alert-success alert-dismissible fade show position-fixed';
-            alert.style.top = '20px';
-            alert.style.right = '20px';
-            alert.style.zIndex = '9999';
+            alert.style.cssText = 'top: 20px; right: 20px; z-index: 9999; max-width: 400px;';
             alert.innerHTML = `
-                ${mensagem}
+                <strong>Sucesso:</strong> ${mensagem}
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
             `;
             document.body.appendChild(alert);
@@ -997,14 +1040,13 @@
             }, 5000);
         }
         
+        // Melhorar função de erro
         function mostrarErro(mensagem) {
             const alert = document.createElement('div');
             alert.className = 'alert alert-danger alert-dismissible fade show position-fixed';
-            alert.style.top = '20px';
-            alert.style.right = '20px';
-            alert.style.zIndex = '9999';
+            alert.style.cssText = 'top: 20px; right: 20px; z-index: 9999; max-width: 400px;';
             alert.innerHTML = `
-                ${mensagem}
+                <strong>Erro:</strong> ${mensagem}
                 <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
             `;
             document.body.appendChild(alert);
@@ -1013,8 +1055,18 @@
                 if (alert.parentNode) {
                     alert.parentNode.removeChild(alert);
                 }
-            }, 5000);
+            }, 8000);
         }
+
+        // Cleanup melhorado
+        window.addEventListener('beforeunload', () => {
+            if (keepAliveInterval) {
+                clearInterval(keepAliveInterval);
+            }
+            if (socket.connected) {
+                socket.disconnect();
+            }
+        });
     </script>
 </body>
 </html>

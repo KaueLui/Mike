@@ -268,11 +268,25 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
     <script>
-        // Conectar ao WebSocket
-        const socket = io();
+        // SOLUÇÃO: Mesma configuração robusta
+        const socket = io({
+            transports: ['polling'],
+            upgrade: false,
+            timeout: 60000,
+            forceNew: false,
+            reconnection: true,
+            reconnectionDelay: 2000,
+            reconnectionAttempts: 3,
+            maxReconnectionAttempts: 5,
+            randomizationFactor: 0
+        });
+        
+        let connectionAttempts = 0;
+        const MAX_ATTEMPTS = 5;
         
         socket.on('connect', () => {
-            console.log('✅ Conectado ao servidor');
+            console.log('✅ Dashboard conectado via polling');
+            connectionAttempts = 0;
             document.getElementById('statusConnection').innerHTML = '🟢 Conectado';
             document.getElementById('statusConnection').className = 'badge bg-success text-white me-2';
             
@@ -281,9 +295,20 @@
         });
         
         socket.on('disconnect', () => {
-            console.log('❌ Desconectado do servidor');
+            console.log('❌ Dashboard desconectado');
             document.getElementById('statusConnection').innerHTML = '🔴 Desconectado';
             document.getElementById('statusConnection').className = 'badge bg-danger text-white me-2';
+        });
+        
+        socket.on('connect_error', (error) => {
+            connectionAttempts++;
+            console.error(`❌ Erro dashboard (${connectionAttempts}/${MAX_ATTEMPTS}):`, error.message);
+            
+            if (connectionAttempts >= MAX_ATTEMPTS) {
+                socket.disconnect();
+                document.getElementById('statusConnection').innerHTML = '🔴 Conexão perdida';
+                mostrarNotificacaoErro('Conexão perdida. Recarregue a página.');
+            }
         });
         
         // Receber atualizações do dashboard
@@ -475,6 +500,46 @@
                 document.body.removeChild(toast);
             });
         }
+        
+        function mostrarNotificacaoErro(mensagem) {
+            const toast = document.createElement('div');
+            toast.className = 'toast';
+            toast.style.cssText = 'position: fixed; top: 20px; right: 20px; z-index: 9999;';
+            
+            toast.innerHTML = `
+                <div class="toast-header bg-danger text-white">
+                    <strong class="me-auto">❌ Erro de Conexão</strong>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast"></button>
+                </div>
+                <div class="toast-body">
+                    ${mensagem}
+                </div>
+            `;
+            
+            document.body.appendChild(toast);
+            const bsToast = new bootstrap.Toast(toast);
+            bsToast.show();
+            
+            toast.addEventListener('hidden.bs.toast', () => {
+                if (toast.parentNode) {
+                    document.body.removeChild(toast);
+                }
+            });
+        }
+        
+        // Remove aria-hidden warnings by properly handling modal elements
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initialize modals without aria-hidden issues
+            const modals = document.querySelectorAll('.modal');
+            modals.forEach(modal => {
+                modal.addEventListener('shown.bs.modal', function() {
+                    this.removeAttribute('aria-hidden');
+                });
+                modal.addEventListener('hidden.bs.modal', function() {
+                    this.setAttribute('aria-hidden', 'true');
+                });
+            });
+        });
     </script>
 </body>
 </html>

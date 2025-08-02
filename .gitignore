@@ -1,3 +1,5 @@
-server/_pycache__/
+server/__pycache__
 server/data/encodings.pickle
 server/data/nodes.json
+
+data/nodes.json
